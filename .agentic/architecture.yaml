@@ -1,0 +1,56 @@
+service: SERVICE-CATALOG-API
+entryPoint: src/index.ts
+
+layers:
+  domain:
+    path: src/domain
+    responsibilities:
+      - entities
+      - business-rules
+    allowedDependencies: []
+  application:
+    path: src/application
+    responsibilities:
+      - use-cases
+      - ports
+    allowedDependencies:
+      - domain
+  infrastructure:
+    path: src/infrastructure
+    responsibilities:
+      - cloudflare-runtime-adapters
+      - d1-repositories
+    allowedDependencies:
+      - application
+      - domain
+  api:
+    path: src/api
+    responsibilities:
+      - http-routing
+      - request-validation
+      - response-translation
+    allowedDependencies:
+      - application
+      - domain
+      - infrastructure
+
+forbiddenDependencies:
+  - from: domain
+    to:
+      - hono
+      - cloudflare
+      - d1
+  - from: application
+    to:
+      - infrastructure
+      - hono
+
+persistence:
+  type: cloudflare-d1
+  binding: DB
+  migrations: migrations
+
+exposedServices:
+  - id: SERVICE-CATALOG-API
+    protocol: http
+    contract: openapi/catalog-api.yaml

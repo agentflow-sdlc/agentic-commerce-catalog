@@ -1,0 +1,25 @@
+id: REPO-COMMERCE-CATALOG
+name: agentic-commerce-catalog
+domain: catalog
+type: cloudflare-worker
+language: typescript
+defaultBranch: main
+
+services:
+  - SERVICE-CATALOG-API
+
+commands:
+  install: npm ci
+  dev: npm run dev
+  typecheck: npm run typecheck
+  lint: npm run lint
+  test: npm test
+  check: npm run check
+  deploy: npm run deploy
+
+qualityGates:
+  - typecheck
+  - lint
+  - unit-tests
+  - integration-tests
+  - openapi-validation
