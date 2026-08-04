@@ -1,0 +1,15 @@
+gates:
+  typecheck:
+    command: npm run typecheck
+  lint:
+    command: npm run lint
+  formatting:
+    command: npm run format:check
+  unit-tests:
+    command: npm run test:unit
+  integration-tests:
+    command: npm run test:integration
+  openapi-validation:
+    command: npm run validate:openapi
+  complete-check:
+    command: npm run check
