@@ -1,9 +1,10 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "agentic-commerce-catalog",
+  "name": "catalog-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-04",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
@@ -11,8 +12,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "agentic-commerce-catalog",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "catalog-data",
+      "database_id": "1b533549-c008-4509-b923-be416adeb73d",
       "migrations_dir": "migrations",
     },
   ],

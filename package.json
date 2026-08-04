@@ -19,9 +19,10 @@
     "test:integration": "vitest run tests/integration",
     "validate:architecture": "node scripts/validate-architecture.mjs",
     "validate:openapi": "redocly lint openapi/catalog-api.yaml",
-    "db:migrate:local": "wrangler d1 migrations apply agentic-commerce-catalog --local",
-    "db:migrate:remote": "wrangler d1 migrations apply agentic-commerce-catalog --remote",
+    "db:migrate:local": "wrangler d1 migrations apply catalog-data --local",
+    "db:migrate:remote": "wrangler d1 migrations apply catalog-data --remote",
     "deploy": "wrangler deploy",
+    "verify:health": "node scripts/verify-health.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run validate:architecture && npm run validate:openapi && npm run test"
   },
   "dependencies": {

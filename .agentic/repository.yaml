@@ -15,7 +15,10 @@ commands:
   lint: npm run lint
   test: npm test
   check: npm run check
+  migrateLocal: npm run db:migrate:local
+  migrateRemote: npm run db:migrate:remote
   deploy: npm run deploy
+  verifyHealth: npm run verify:health
 
 qualityGates:
   - typecheck

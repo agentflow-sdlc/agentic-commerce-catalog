@@ -1,0 +1,70 @@
+name: Deploy Catalog to Cloudflare
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run all validations
+        run: npm run check
+
+      - name: Apply remote D1 migrations
+        run: npm run db:migrate:remote
+
+      - name: Deploy Worker
+        id: deploy
+        env:
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-output.jsonl
+        run: |
+          npm run deploy
+          node scripts/read-deployment-url.mjs "$WRANGLER_OUTPUT_FILE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public health endpoint
+        env:
+          CATALOG_BASE_URL: ${{ steps.deploy.outputs.catalog_base_url }}
+        run: npm run verify:health
+
+      - name: Publish deployment summary
+        env:
+          CATALOG_BASE_URL: ${{ steps.deploy.outputs.catalog_base_url }}
+        run: |
+          {
+            echo "## Catalog deployment"
+            echo
+            echo "- Worker: \`catalog-api\`"
+            echo "- D1 database: \`catalog-data\`"
+            echo "- URL: [$CATALOG_BASE_URL]($CATALOG_BASE_URL)"
+            echo "- Health: [$CATALOG_BASE_URL/health]($CATALOG_BASE_URL/health)"
+            echo "- Commit: \`$GITHUB_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
