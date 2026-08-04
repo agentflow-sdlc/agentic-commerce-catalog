@@ -12,8 +12,9 @@ The repository currently provides:
 - Duplicate SKU and normalized category-name protection.
 - Consistent error envelopes and request correlation IDs.
 - D1 migrations, local integration tests, an OpenAPI contract, and pull-request CI.
+- Reproducible Cloudflare deployment automation with remote migrations and a public health check.
 
-Agents, Cloudflare Workflows, search, inventory, orders, authentication, external knowledge integrations, and production infrastructure are intentionally outside this bootstrap.
+Agents, Cloudflare Workflows, search, inventory, orders, authentication, and external knowledge integrations remain outside this bootstrap.
 
 ## Architecture
 
@@ -76,14 +77,9 @@ curl http://localhost:8787/health
 
 The Worker expects one D1 binding named `DB`. The binding and migration directory are declared in `wrangler.jsonc`.
 
-The committed `database_id` is a non-deployable placeholder. Before applying remote migrations or deploying:
+The production resource is `catalog-data`. Remote migrations and deployments require authenticated Wrangler access. See [`docs/deployment-cloudflare.md`](docs/deployment-cloudflare.md) for local, manual, and continuous deployment procedures, required GitHub secrets, health verification, logs, and rollback guidance.
 
-1. Create the database with `npx wrangler d1 create agentic-commerce-catalog`.
-2. Replace `00000000-0000-0000-0000-000000000000` in `wrangler.jsonc` with the returned database ID.
-3. Apply migrations with `npm run db:migrate:remote`.
-4. Deploy explicitly with `npm run deploy`.
-
-No remote migration or production deployment runs in CI.
+The deployed Catalog API is available at `https://catalog-api.agentflow-sdlc-agentic-commerce-catalog.workers.dev`.
 
 ## API
 
@@ -114,18 +110,22 @@ Database constraints reinforce the uniqueness, price, status, and foreign-key ru
 
 ## Commands
 
-| Command                         | Purpose                                              |
-| ------------------------------- | ---------------------------------------------------- |
-| `npm run dev`                   | Start Wrangler locally.                              |
-| `npm run typecheck`             | Verify generated Worker types and strict TypeScript. |
-| `npm run lint`                  | Run ESLint with zero warnings.                       |
-| `npm run format:check`          | Check Prettier formatting.                           |
-| `npm run validate:architecture` | Enforce core dependency boundaries.                  |
-| `npm run validate:openapi`      | Lint the OpenAPI contract.                           |
-| `npm run test:unit`             | Run domain unit tests.                               |
-| `npm run test:integration`      | Run the Worker against isolated local D1.            |
-| `npm test`                      | Run all tests.                                       |
-| `npm run check`                 | Run every pull-request quality gate.                 |
+| Command                         | Purpose                                               |
+| ------------------------------- | ----------------------------------------------------- |
+| `npm run dev`                   | Start Wrangler locally.                               |
+| `npm run typecheck`             | Verify generated Worker types and strict TypeScript.  |
+| `npm run lint`                  | Run ESLint with zero warnings.                        |
+| `npm run format:check`          | Check Prettier formatting.                            |
+| `npm run validate:architecture` | Enforce core dependency boundaries.                   |
+| `npm run validate:openapi`      | Lint the OpenAPI contract.                            |
+| `npm run test:unit`             | Run domain unit tests.                                |
+| `npm run test:integration`      | Run the Worker against isolated local D1.             |
+| `npm test`                      | Run all tests.                                        |
+| `npm run check`                 | Run every pull-request quality gate.                  |
+| `npm run db:migrate:local`      | Apply Catalog migrations to isolated local D1.        |
+| `npm run db:migrate:remote`     | Apply pending migrations to production D1.            |
+| `npm run deploy`                | Deploy `catalog-api` with the local Wrangler version. |
+| `npm run verify:health`         | Verify the configured public Catalog URL.             |
 
 ## Tests and CI
 
@@ -147,4 +147,5 @@ scripts/              Local validation utilities
 src/                  Worker implementation
 tests/unit/           Domain tests
 tests/integration/    Worker and local D1 tests
+docs/                 Operational and deployment guides
 ```
