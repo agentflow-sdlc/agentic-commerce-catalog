@@ -13,3 +13,5 @@ gates:
     command: npm run validate:openapi
   complete-check:
     command: npm run check
+  deployment-health:
+    command: npm run verify:health
