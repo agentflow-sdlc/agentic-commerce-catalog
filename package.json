@@ -1,0 +1,50 @@
+{
+  "name": "@agentflow-sdlc/agentic-commerce-catalog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Catalog API baseline for the Agentic SDLC MVP.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "npm@10.9.8",
+  "scripts": {
+    "dev": "wrangler dev",
+    "types:check": "wrangler types --check",
+    "typecheck": "npm run types:check && tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "validate:architecture": "node scripts/validate-architecture.mjs",
+    "validate:openapi": "redocly lint openapi/catalog-api.yaml",
+    "db:migrate:local": "wrangler d1 migrations apply agentic-commerce-catalog --local",
+    "db:migrate:remote": "wrangler d1 migrations apply agentic-commerce-catalog --remote",
+    "deploy": "wrangler deploy",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run validate:architecture && npm run validate:openapi && npm run test"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.0",
+    "hono": "^4.13.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "@eslint/js": "^10.0.1",
+    "@redocly/cli": "^2.44.1",
+    "@types/node": "^22.20.1",
+    "eslint": "^10.8.0",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.118.0",
+    "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "undici": "7.29.0"
+  }
+}

@@ -1,0 +1,482 @@
+openapi: 3.1.0
+info:
+  title: Agentic Commerce Catalog API
+  version: 0.1.0
+  description: >-
+    HTTP contract for the Catalog service bootstrap. The API manages products,
+    product activation state, and categories while preserving correlation IDs.
+  license:
+    name: UNLICENSED
+security: []
+servers:
+  - url: /
+    description: Current Worker host.
+tags:
+  - name: Health
+    description: Runtime health information.
+  - name: Products
+    description: Product lifecycle operations.
+  - name: Categories
+    description: Product category operations.
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Check service health
+      tags: [Health]
+      responses:
+        "200":
+          description: The service is operational.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+              example:
+                data:
+                  status: operational
+                  service: catalog-api
+                  version: 0.1.0
+                correlationId: 7af59476-58af-4a3b-b540-318a84c19ca5
+  /products:
+    post:
+      operationId: createProduct
+      summary: Create a product
+      tags: [Products]
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+            example:
+              sku: BOOK-001
+              name: Domain-Driven Design
+              description: A software design reference.
+              price: 42.5
+              categoryId: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
+      responses:
+        "201":
+          description: Product created.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    get:
+      operationId: listProducts
+      summary: List products
+      tags: [Products]
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Products ordered by creation time, newest first.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductListEnvelope"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /products/{id}:
+    get:
+      operationId: getProduct
+      summary: Get a product by ID
+      tags: [Products]
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Product found.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEnvelope"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /products/{id}/status:
+    patch:
+      operationId: updateProductStatus
+      summary: Activate or deactivate a product
+      tags: [Products]
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductStatusRequest"
+            examples:
+              deactivate:
+                value:
+                  isActive: false
+              activate:
+                value:
+                  isActive: true
+      responses:
+        "200":
+          description: Product status updated.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /categories:
+    post:
+      operationId: createCategory
+      summary: Create a category
+      tags: [Categories]
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+            example:
+              name: Books
+              description: Printed and digital books.
+      responses:
+        "201":
+          description: Category created.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    get:
+      operationId: listCategories
+      summary: List categories
+      tags: [Categories]
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Categories ordered by normalized name.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryListEnvelope"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+components:
+  parameters:
+    ProductId:
+      name: id
+      in: path
+      required: true
+      description: Stable product identifier.
+      schema:
+        type: string
+        minLength: 1
+      example: PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: >-
+        Caller-provided correlation ID. When omitted or invalid, the service
+        generates one and always returns it in the response.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
+  headers:
+    CorrelationId:
+      description: Correlation ID associated with the request.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: The request is invalid.
+      headers:
+        X-Correlation-ID:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: REQUEST_VALIDATION_FAILED
+              message: The request payload is invalid.
+              details:
+                issues:
+                  - path: price
+                    message: Too small
+            correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
+    NotFound:
+      description: The requested resource does not exist.
+      headers:
+        X-Correlation-ID:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: PRODUCT_NOT_FOUND
+              message: The requested product does not exist.
+              details:
+                productId: PRODUCT-UNKNOWN
+            correlationId: 10bdd36c-973a-42fe-98fd-113a670f07ec
+    Conflict:
+      description: A unique catalog value already exists.
+      headers:
+        X-Correlation-ID:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: PRODUCT_SKU_ALREADY_EXISTS
+              message: A product with this SKU already exists.
+              details:
+                sku: BOOK-001
+            correlationId: 13f789c9-a032-48c6-b1eb-4439d1464657
+    InternalServerError:
+      description: An unexpected server error occurred.
+      headers:
+        X-Correlation-ID:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: INTERNAL_SERVER_ERROR
+              message: An unexpected error occurred.
+              details: {}
+            correlationId: 7ecf5fea-bd97-42bf-a715-1553798a5180
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          const: operational
+        service:
+          type: string
+          const: catalog-api
+        version:
+          type: string
+          const: 0.1.0
+    Product:
+      type: object
+      additionalProperties: false
+      required: [id, sku, name, price, isActive, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        price:
+          type: number
+          minimum: 0
+        categoryId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Category:
+      type: object
+      additionalProperties: false
+      required: [id, name, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateProductRequest:
+      type: object
+      additionalProperties: false
+      required: [sku, name, price]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        price:
+          type: number
+          minimum: 0
+        categoryId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    UpdateProductStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [isActive]
+      properties:
+        isActive:
+          type: boolean
+    CreateCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    HealthEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, correlationId]
+      properties:
+        data:
+          $ref: "#/components/schemas/Health"
+        correlationId:
+          type: string
+    ProductEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, correlationId]
+      properties:
+        data:
+          $ref: "#/components/schemas/Product"
+        correlationId:
+          type: string
+    ProductListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, correlationId]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        correlationId:
+          type: string
+    CategoryEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, correlationId]
+      properties:
+        data:
+          $ref: "#/components/schemas/Category"
+        correlationId:
+          type: string
+    CategoryListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, correlationId]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Category"
+        correlationId:
+          type: string
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, correlationId]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+        correlationId:
+          type: string
