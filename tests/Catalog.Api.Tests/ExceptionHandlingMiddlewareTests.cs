@@ -28,6 +28,9 @@ public sealed class ExceptionHandlingMiddlewareTests
             json.RootElement.GetProperty("error").GetProperty("code").GetString());
         Assert.False(string.IsNullOrWhiteSpace(
             json.RootElement.GetProperty("correlationId").GetString()));
+        Assert.Equal(
+            json.RootElement.GetProperty("correlationId").GetString(),
+            context.Response.Headers[CorrelationIdMiddleware.HeaderName].ToString());
         Assert.DoesNotContain("sensitive failure detail", responseBody, StringComparison.Ordinal);
         Assert.DoesNotContain("InvalidOperationException", responseBody, StringComparison.Ordinal);
         Assert.DoesNotContain("stack", responseBody, StringComparison.OrdinalIgnoreCase);

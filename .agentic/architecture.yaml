@@ -16,32 +16,34 @@ components:
       - http-translation
       - middleware
       - health
+      - product-endpoints
       - development-openapi
     allowedDependencies:
       - contracts
-      - managers-when-use-cases-exist
+      - managers
+      - accessors-composition-only
   managers:
     project: src/Catalog.Managers/Catalog.Managers.csproj
     responsibilities:
-      - future-use-case-coordination
+      - product-use-case-coordination
     allowedDependencies:
-      - contracts
-      - engines
-      - required-accessors
+      - engines-and-domain-ports
   engines:
     project: src/Catalog.Engines/Catalog.Engines.csproj
     responsibilities:
-      - future-deterministic-business-rules
-    allowedDependencies:
-      - contracts-when-required
+      - product-domain-model
+      - deterministic-product-rules
+      - neutral-accessor-ports
+    allowedDependencies: []
   accessors:
     project: src/Catalog.Accessors/Catalog.Accessors.csproj
     responsibilities:
-      - future-sql-access
+      - sql-access
       - future-file-access
       - future-api-access
       - future-information-container-access
     allowedDependencies:
+      - engines-and-domain-ports
       - required-provider-libraries
 
 forbiddenDependencies:
@@ -64,22 +66,28 @@ forbiddenDependencies:
       - sql
   - from: managers
     to:
+      - accessors
       - aspnet-core
+      - entity-framework-core
+      - azure
+      - sql
   - from: api
     to:
-      - direct-accessors-for-use-cases
+      - direct-accessor-invocation
+      - entity-framework-core
+      - sql-client
 
 endpoints:
   implemented:
     - method: GET
       path: /health
-  pending:
     - method: POST
       path: /products
     - method: GET
-      path: /products
-    - method: GET
       path: /products/{id}
+  pending:
+    - method: GET
+      path: /products
     - method: PATCH
       path: /products/{id}/status
     - method: POST
@@ -88,6 +96,9 @@ endpoints:
       path: /categories
 
 persistence:
-  status: pending
+  status: implemented-for-product
   boundary: Catalog.Accessors
-  providers: []
+  provider: ef-core-sql-server
+  azureSqlCompatible: true
+  connectionString: CatalogDb
+  migration: src/Catalog.Accessors/Migrations/20260805214332_InitialProduct.cs

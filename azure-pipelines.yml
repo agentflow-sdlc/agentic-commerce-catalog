@@ -26,6 +26,9 @@ steps:
       packageType: sdk
       useGlobalJson: true
 
+  - script: dotnet tool restore
+    displayName: Restore repository tools
+
   - script: mkdir -p "$(testResultsDirectory)"
     displayName: Prepare diagnostic artifact directory
 
@@ -42,6 +45,8 @@ steps:
       --logger "trx;LogFilePrefix=Catalog"
       --results-directory "$(testResultsDirectory)"
     displayName: Run tests
+    env:
+      RUN_SQL_SERVER_TESTS: "true"
 
   - task: PublishTestResults@2
     displayName: Publish test results
@@ -63,6 +68,14 @@ steps:
       --no-build
       --filter Category=OpenApi
     displayName: Validate OpenAPI contract
+    condition: succeededOrFailed()
+
+  - script: >-
+      dotnet ef migrations has-pending-model-changes
+      --project src/Catalog.Accessors/Catalog.Accessors.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+    displayName: Validate EF Core migration
     condition: succeededOrFailed()
 
   - task: PublishPipelineArtifact@1

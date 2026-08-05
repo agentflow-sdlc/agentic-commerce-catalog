@@ -2,6 +2,16 @@
   <PropertyGroup>
     <AssemblyName>Catalog.Accessors</AssemblyName>
     <RootNamespace>Catalog.Accessors</RootNamespace>
-    <Description>Technical access boundary for SQL, files, APIs, and other information containers; no accessors are implemented yet.</Description>
+    <Description>Technical access boundary for SQL, files, APIs, and other information containers.</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Catalog.Engines\Catalog.Engines.csproj" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+  </ItemGroup>
 </Project>

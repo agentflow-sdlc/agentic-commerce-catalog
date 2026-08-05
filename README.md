@@ -1,120 +1,167 @@
 # Agentic Commerce Catalog
 
-`agentic-commerce-catalog` is the Catalog service for the Agentic SDLC MVP. This phase establishes its .NET 10, ASP.NET Core, and IDesign foundation while preserving the prior Product and Category contract for later vertical slices.
+`agentic-commerce-catalog` is the Catalog service for the Agentic SDLC MVP. It provides a provider-neutral Product domain and a .NET 10 vertical slice backed by EF Core and SQL Server-compatible persistence.
 
-Azure DevOps administers Boards, Pipelines, states, and evidence. GitHub stores the repository, branches, commits, and pull requests. Azure is the future execution platform; this repository does not deploy Azure resources yet.
+Azure DevOps administers Boards, Pipelines, states, and evidence. GitHub stores the repository, branches, commits, and pull requests.
 
 ## Current status
 
-Only one functional endpoint is implemented in .NET:
+The service implements these endpoints:
 
 ```http
 GET /health
+POST /products
+GET /products/{id}
 ```
 
-```json
-{
-  "status": "healthy",
-  "service": "catalog-api",
-  "version": "0.1.0"
-}
-```
+Product creation normalizes SKU and text, rejects invalid or duplicate SKUs, accepts non-negative `decimal(18,2)` prices including zero, generates a stable application ID, starts products as active, and assigns deterministic timestamps through `TimeProvider`. Product retrieval returns a stable not-found error for unknown IDs.
 
-Product and Category operations remain documented in OpenAPI and will be ported in the next vertical slice. There is no persistence, database provider, Azure infrastructure, authentication, agent, or orchestration runtime.
+Product listing, status changes, Category, search, filtering, inventory, orders, authentication, deployment, Azure infrastructure, agents, and orchestration are outside this slice.
 
 ## Architecture
 
-| Project | Current responsibility |
+The implemented request path is:
+
+```text
+HTTP -> Catalog.Api -> Catalog.Managers -> Catalog.Engines
+                                      -> domain IProductAccessor port
+                                      -> Catalog.Accessors -> EF Core -> SQL Server
+```
+
+| Project | Responsibility |
 | --- | --- |
-| `Catalog.Contracts` | Stable HTTP contracts required by implemented behavior. |
-| `Catalog.Api` | ASP.NET Core entry point, HTTP translation, middleware, health, and development OpenAPI. |
-| `Catalog.Managers` | Future use-case coordination boundary; no use cases yet. |
-| `Catalog.Engines` | Future deterministic Product and Category rules; no rules yet. |
-| `Catalog.Accessors` | Future access to SQL, files, APIs, object stores, and other information containers; no accessors yet. |
+| `Catalog.Contracts` | Provider-neutral HTTP request and response contracts. |
+| `Catalog.Api` | ASP.NET Core entry point, composition, HTTP translation, middleware, health, and development OpenAPI. |
+| `Catalog.Managers` | Create and get-by-ID use-case coordination. |
+| `Catalog.Engines` | Deterministic Product rules, Product model, and provider-neutral accessor port. |
+| `Catalog.Accessors` | Concrete access to information containers. This slice implements the EF Core SQL Server accessor; future file, API, or object-store accessors also belong here. |
 
-Managers, Engines, and Accessors contain only assembly markers needed to execute architecture tests. They do not contain placeholder services, repositories, or provider abstractions.
+The API references `Catalog.Accessors` only in the composition root. Managers depend on the domain port and never on EF Core or the SQL implementation.
 
-See the concrete [system design](docs/idesign/system-design.md), [project design](docs/idesign/project-design.md), [use cases](docs/idesign/use-cases.md), and [volatility analysis](docs/idesign/volatility-analysis.md).
+See the [system design](docs/idesign/system-design.md), [project design](docs/idesign/project-design.md), [use cases](docs/idesign/use-cases.md), and [volatility analysis](docs/idesign/volatility-analysis.md).
 
 ## Requirements
 
 - .NET SDK `10.0.302`, pinned by `global.json`.
 - Access to NuGet.org during restore.
+- SQL Server or Azure SQL-compatible connection for Product requests.
+- Docker only when running the ephemeral SQL Server integration suite.
 
-## Validate the repository
-
-```bash
-dotnet restore Catalog.sln
-dotnet build Catalog.sln --configuration Release --no-restore
-dotnet test Catalog.sln --configuration Release --no-build
-dotnet format Catalog.sln --verify-no-changes --no-restore
-```
-
-Validate the preserved OpenAPI source explicitly:
+Restore the repository-local EF Core tool before migration commands:
 
 ```bash
-dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj \
-  --configuration Release \
-  --no-build \
-  --filter Category=OpenApi
+dotnet tool restore
 ```
 
-Package versions are centralized in `Directory.Packages.props`. Nullable references, implicit usings, analyzers, deterministic builds, and warnings-as-errors are configured in `Directory.Build.props`.
+## Database configuration
+
+The connection string name is `CatalogDb`. No secret is committed. Development configuration contains a Windows LocalDB connection without credentials.
+
+Use an environment variable in any environment:
+
+```bash
+ConnectionStrings__CatalogDb="Server=localhost,1433;Database=AgenticCommerceCatalog;User Id=sa;Password=<local-password>;TrustServerCertificate=True" dotnet run --project src/Catalog.Api/Catalog.Api.csproj
+```
+
+For local user secrets:
+
+```bash
+dotnet user-secrets init --project src/Catalog.Api/Catalog.Api.csproj
+dotnet user-secrets set "ConnectionStrings:CatalogDb" "<connection-string>" --project src/Catalog.Api/Catalog.Api.csproj
+```
+
+Azure SQL uses the same `CatalogDb` connection-string boundary. Environment-specific credentials must be supplied by the runtime secret mechanism, never by `appsettings` files.
 
 ## Run locally
 
 ```bash
+dotnet restore Catalog.sln
 dotnet run --project src/Catalog.Api/Catalog.Api.csproj
 ```
 
-Use the URL printed by ASP.NET Core, then request `/health`. Every response receives an `X-Correlation-ID`; a valid caller-provided value is propagated. Unexpected exceptions are logged and translated to a stable response without stack traces.
+Use the URL printed by ASP.NET Core. Every response receives an `X-Correlation-ID`; a valid caller-provided value is propagated. Expected Product failures are translated to stable 400, 404, or 409 responses, and unexpected exceptions return a safe 500 response without implementation details.
 
-ASP.NET Core generates runtime OpenAPI at `/openapi/v1.json` in the Development environment. It reflects only implemented runtime endpoints.
+Runtime OpenAPI is available at `/openapi/v1.json` in Development.
+
+## Migrations
+
+The initial Product migration is under `src/Catalog.Accessors/Migrations` and creates only the `Products` table, including:
+
+- application-assigned `nvarchar(128)` primary key;
+- required unique `nvarchar(64)` SKU;
+- required `nvarchar(200)` name;
+- nullable `nvarchar(2000)` description;
+- `decimal(18,2)` price with a non-negative check constraint;
+- active state and `datetimeoffset` timestamps.
+
+Create a future migration with:
+
+```bash
+dotnet ef migrations add <MigrationName> \
+  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
+  --output-dir Migrations
+```
+
+Verify that the model and committed migration agree:
+
+```bash
+dotnet ef migrations has-pending-model-changes \
+  --project src/Catalog.Accessors/Catalog.Accessors.csproj
+```
+
+## Validate the repository
+
+```bash
+dotnet tool restore
+dotnet restore Catalog.sln
+dotnet build Catalog.sln --configuration Release --no-restore
+dotnet test Catalog.sln --configuration Release --no-build
+dotnet format Catalog.sln --verify-no-changes --no-restore
+dotnet ef migrations has-pending-model-changes \
+  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
+  --configuration Release \
+  --no-build
+```
+
+The default test command runs all non-container tests and reports the SQL integration tests as skipped. On a Docker-enabled host, run the real SQL Server suite with:
+
+```bash
+RUN_SQL_SERVER_TESTS=true dotnet test \
+  tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj \
+  --configuration Release
+```
+
+The SQL suite starts an ephemeral SQL Server container, applies the committed EF migration, exercises POST and GET through the complete HTTP stack, validates duplicate-SKU behavior at both use-case and database levels, and removes the container after the suite.
 
 ## Public OpenAPI contract
 
-[`openapi/catalog-api.yaml`](openapi/catalog-api.yaml) remains the technology-neutral public contract. It marks `/health` as `implemented` and all Product and Category operations as `pending-dotnet`. The pending routes, requests, responses, and domain schemas remain available for the next slices.
-
-OpenAPI syntax is validated with the Microsoft OpenAPI.NET YAML reader in `Catalog.Api.Tests` and in Azure Pipelines.
-
-## Tests
-
-`Catalog.Api.Tests` uses `WebApplicationFactory<Program>` and ASP.NET Core TestServer; no external process or database is required. It verifies health JSON, service metadata, correlation generation and propagation, 404 behavior, development OpenAPI, safe unexpected errors, and source OpenAPI validity.
-
-`Catalog.Architecture.Tests` loads every production assembly and enforces the IDesign dependency boundaries, including the rule that Engines cannot use Accessors and the API cannot bypass Managers to reach information containers.
+[`openapi/catalog-api.yaml`](openapi/catalog-api.yaml) is the technology-neutral public contract. It marks health, Product creation, and Product retrieval as implemented; later Product and Category operations remain explicitly pending.
 
 ## Azure Pipelines
 
-`azure-pipelines.yml` validates pull requests and changes to `main`. It installs the SDK from `global.json`, restores, builds Release, runs tests, publishes TRX results, verifies formatting, validates OpenAPI, and publishes diagnostic test artifacts on failure. It contains no deployment, service connection, infrastructure, or secret configuration.
-
-## Previous baseline
-
-The TypeScript, Hono, Cloudflare Workers, and D1 proof of concept is preserved at tag `archive/typescript-cloudflare-poc`. Its behavior, rules, schema, tests, scripts, and compatibility requirements are recorded in [`docs/migration/typescript-cloudflare-baseline.md`](docs/migration/typescript-cloudflare-baseline.md). Historical D1 migrations are retained under `docs/migration/d1/` as evidence, not active persistence.
+`azure-pipelines.yml` validates pull requests and `main`. It restores tools and packages, builds Release, runs all tests with the Docker-backed SQL suite enabled, publishes TRX evidence, verifies formatting, validates OpenAPI, and verifies that EF Core has no pending model changes. It contains no deployment or infrastructure configuration.
 
 ## Repository structure
 
 ```text
-.agentic/                         Machine-readable repository and architecture metadata
-src/Catalog.Contracts/           Stable shared contracts
-src/Catalog.Api/                 ASP.NET Core entry point and middleware
-src/Catalog.Managers/            Future use-case coordination boundary
-src/Catalog.Engines/             Future business-rule boundary
-src/Catalog.Accessors/           Future information-container access boundary
-tests/Catalog.Api.Tests/         In-memory HTTP, middleware, and OpenAPI tests
-tests/Catalog.Architecture.Tests/ Executable dependency rules
-openapi/                          Preserved public HTTP contract
-docs/idesign/                     Concrete IDesign documentation
-docs/migration/                   Historical baseline and D1 evidence
-azure-pipelines.yml               Pull-request and main validation
+.agentic/                                   Machine-readable repository and architecture metadata
+.config/dotnet-tools.json                   Pinned dotnet-ef tool
+src/Catalog.Contracts/                      Public HTTP contracts
+src/Catalog.Api/                            ASP.NET Core endpoints and middleware
+src/Catalog.Managers/                       Product use-case coordination
+src/Catalog.Engines/                        Product rules, domain model, and neutral ports
+src/Catalog.Accessors/Sql/                   EF Core SQL Server implementation
+src/Catalog.Accessors/Migrations/            Reproducible Product migration
+tests/Catalog.Api.Tests/                     In-memory HTTP and OpenAPI tests
+tests/Catalog.Product.Tests/                 Engine and Manager unit tests
+tests/Catalog.Product.IntegrationTests/      Ephemeral SQL Server end-to-end tests
+tests/Catalog.Architecture.Tests/            Executable dependency rules
+openapi/                                    Technology-neutral HTTP contract
+docs/idesign/                               IDesign documentation
+docs/migration/                             Historical Cloudflare/D1 evidence
+azure-pipelines.yml                         Pull-request and main validation
 ```
 
-## Migration phases
+## Previous baseline
 
-1. TypeScript/Cloudflare Catalog proof of concept — archived.
-2. .NET 10 Catalog and IDesign foundation — this phase.
-3. Implement the Product vertical slice — next.
-4. Port Category behavior and approved persistence/infrastructure in separately reviewed work.
-
-## Out of scope
-
-Product, Category, EF Core, SQL, Azure SQL, D1, Pulumi, Container Apps, Functions, Key Vault, remote Application Insights, Microsoft Agent Framework, Durable Task, agentic workflows, Azure DevOps or GitHub integrations, Playwright, authentication, search, inventory, and orders are not implemented in this phase.
+The TypeScript, Hono, Cloudflare Workers, and D1 proof of concept is preserved at tag `archive/typescript-cloudflare-poc`. Its behavior and compatibility evidence remain under `docs/migration/`; D1 files are historical evidence and are not active migrations.

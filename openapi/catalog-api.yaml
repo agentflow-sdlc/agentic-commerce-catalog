@@ -3,9 +3,9 @@ info:
   title: Agentic Commerce Catalog API
   version: 0.1.0
   description: >-
-    Technology-neutral HTTP contract for Catalog. The .NET foundation currently
-    implements only GET /health; Product and Category operations remain preserved
-    for the next migration vertical slices.
+    Technology-neutral HTTP contract for Catalog. The .NET service implements
+    GET /health, POST /products, and GET /products/{id}; the remaining Product
+    and Category operations are preserved for later vertical slices.
   license:
     name: UNLICENSED
 security: []
@@ -49,7 +49,7 @@ paths:
       operationId: createProduct
       summary: Create a product
       tags: [Products]
-      x-implementation-status: pending-dotnet
+      x-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       requestBody:
@@ -63,7 +63,6 @@ paths:
               name: Domain-Driven Design
               description: A software design reference.
               price: 42.5
-              categoryId: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
       responses:
         "201":
           description: Product created.
@@ -76,8 +75,6 @@ paths:
                 $ref: "#/components/schemas/ProductEnvelope"
         "400":
           $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "500":
@@ -106,7 +103,7 @@ paths:
       operationId: getProduct
       summary: Get a product by ID
       tags: [Products]
-      x-implementation-status: pending-dotnet
+      x-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/CorrelationId"
@@ -344,10 +341,8 @@ components:
         price:
           type: number
           minimum: 0
-        categoryId:
-          type: string
-          minLength: 1
-          maxLength: 128
+          maximum: 9999999999999999.99
+          multipleOf: 0.01
         isActive:
           type: boolean
         createdAt:
@@ -396,10 +391,8 @@ components:
         price:
           type: number
           minimum: 0
-        categoryId:
-          type: string
-          minLength: 1
-          maxLength: 128
+          maximum: 9999999999999999.99
+          multipleOf: 0.01
     UpdateProductStatusRequest:
       type: object
       additionalProperties: false

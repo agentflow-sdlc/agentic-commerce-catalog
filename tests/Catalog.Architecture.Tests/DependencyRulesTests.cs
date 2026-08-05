@@ -50,11 +50,18 @@ public sealed class DependencyRulesTests
     }
 
     [Fact]
-    public void ManagersDoNotDependOnAspNetCore()
+    public void ManagersDependOnDomainPortsButNotTechnicalFrameworks()
     {
+        var references = GetReferenceNames(ManagersAssembly);
+
+        Assert.Contains("Catalog.Engines", references);
+        Assert.DoesNotContain("Catalog.Accessors", references);
         Assert.DoesNotContain(
-            GetReferenceNames(ManagersAssembly),
+            references,
             reference => reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            references,
+            reference => reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -72,11 +79,29 @@ public sealed class DependencyRulesTests
     }
 
     [Fact]
-    public void ApiDoesNotAccessInformationContainersDirectly()
+    public void ApiUsesAccessorsOnlyAsACompositionDependency()
     {
+        var references = GetReferenceNames(ApiAssembly);
+
+        Assert.Contains("Catalog.Accessors", references);
+        Assert.DoesNotContain("Catalog.Engines", references);
         Assert.DoesNotContain(
-            GetReferenceNames(ApiAssembly),
-            reference => reference.Equals("Catalog.Accessors", StringComparison.Ordinal));
+            references,
+            reference => reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            references,
+            reference => reference.StartsWith("Microsoft.Data.SqlClient", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AccessorsImplementDomainPortsWithoutDependingOnApiOrManagers()
+    {
+        var references = GetReferenceNames(AccessorsAssembly);
+
+        Assert.Contains("Catalog.Engines", references);
+        Assert.DoesNotContain("Catalog.Api", references);
+        Assert.DoesNotContain("Catalog.Managers", references);
+        Assert.DoesNotContain("Catalog.Contracts", references);
     }
 
     [Fact]

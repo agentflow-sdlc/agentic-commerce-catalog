@@ -2,15 +2,14 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <AssemblyName>Catalog.Api.Tests</AssemblyName>
-    <RootNamespace>Catalog.Api.Tests</RootNamespace>
+    <AssemblyName>Catalog.Product.IntegrationTests</AssemblyName>
+    <RootNamespace>Catalog.Product.IntegrationTests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="Microsoft.OpenApi" />
-    <PackageReference Include="Microsoft.OpenApi.YamlReader" />
+    <PackageReference Include="Testcontainers.MsSql" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>
@@ -19,17 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Catalog.Accessors\Catalog.Accessors.csproj" />
     <ProjectReference Include="..\..\src\Catalog.Api\Catalog.Api.csproj" />
     <ProjectReference Include="..\..\src\Catalog.Contracts\Catalog.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Catalog.Engines\Catalog.Engines.csproj" />
-    <ProjectReference Include="..\..\src\Catalog.Managers\Catalog.Managers.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="..\..\openapi\catalog-api.yaml">
-      <Link>openapi\catalog-api.yaml</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 
   <ItemGroup>
