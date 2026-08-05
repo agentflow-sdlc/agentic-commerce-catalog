@@ -1,17 +1,15 @@
 gates:
-  typecheck:
-    command: npm run typecheck
-  lint:
-    command: npm run lint
+  restore:
+    command: dotnet restore Catalog.sln
+  build:
+    command: dotnet build Catalog.sln --configuration Release --no-restore
+  tests:
+    command: dotnet test Catalog.sln --configuration Release --no-build
+  api-tests:
+    command: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build
+  architecture-tests:
+    command: dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj --configuration Release --no-build
   formatting:
-    command: npm run format:check
-  unit-tests:
-    command: npm run test:unit
-  integration-tests:
-    command: npm run test:integration
+    command: dotnet format Catalog.sln --verify-no-changes --no-restore
   openapi-validation:
-    command: npm run validate:openapi
-  complete-check:
-    command: npm run check
-  deployment-health:
-    command: npm run verify:health
+    command: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi

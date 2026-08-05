@@ -3,14 +3,15 @@ info:
   title: Agentic Commerce Catalog API
   version: 0.1.0
   description: >-
-    HTTP contract for the Catalog service bootstrap. The API manages products,
-    product activation state, and categories while preserving correlation IDs.
+    Technology-neutral HTTP contract for Catalog. The .NET foundation currently
+    implements only GET /health; Product and Category operations remain preserved
+    for the next migration vertical slices.
   license:
     name: UNLICENSED
 security: []
 servers:
   - url: /
-    description: Current Worker host.
+    description: Current Catalog API host.
 tags:
   - name: Health
     description: Runtime health information.
@@ -24,27 +25,31 @@ paths:
       operationId: getHealth
       summary: Check service health
       tags: [Health]
+      x-implementation-status: implemented
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
       responses:
         "200":
-          description: The service is operational.
+          description: The service is healthy.
           headers:
             X-Correlation-ID:
               $ref: "#/components/headers/CorrelationId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthEnvelope"
+                $ref: "#/components/schemas/Health"
               example:
-                data:
-                  status: operational
-                  service: catalog-api
-                  version: 0.1.0
-                correlationId: 7af59476-58af-4a3b-b540-318a84c19ca5
+                status: healthy
+                service: catalog-api
+                version: 0.1.0
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /products:
     post:
       operationId: createProduct
       summary: Create a product
       tags: [Products]
+      x-implementation-status: pending-dotnet
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       requestBody:
@@ -81,6 +86,7 @@ paths:
       operationId: listProducts
       summary: List products
       tags: [Products]
+      x-implementation-status: pending-dotnet
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       responses:
@@ -100,6 +106,7 @@ paths:
       operationId: getProduct
       summary: Get a product by ID
       tags: [Products]
+      x-implementation-status: pending-dotnet
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/CorrelationId"
@@ -122,6 +129,7 @@ paths:
       operationId: updateProductStatus
       summary: Activate or deactivate a product
       tags: [Products]
+      x-implementation-status: pending-dotnet
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/CorrelationId"
@@ -159,6 +167,7 @@ paths:
       operationId: createCategory
       summary: Create a category
       tags: [Categories]
+      x-implementation-status: pending-dotnet
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       requestBody:
@@ -190,6 +199,7 @@ paths:
       operationId: listCategories
       summary: List categories
       tags: [Categories]
+      x-implementation-status: pending-dotnet
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       responses:
@@ -294,9 +304,8 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
           example:
             error:
-              code: INTERNAL_SERVER_ERROR
+              code: UNEXPECTED_ERROR
               message: An unexpected error occurred.
-              details: {}
             correlationId: 7ecf5fea-bd97-42bf-a715-1553798a5180
   schemas:
     Health:
@@ -306,7 +315,7 @@ components:
       properties:
         status:
           type: string
-          const: operational
+          const: healthy
         service:
           type: string
           const: catalog-api
@@ -413,7 +422,7 @@ components:
     Error:
       type: object
       additionalProperties: false
-      required: [code, message, details]
+      required: [code, message]
       properties:
         code:
           type: string
@@ -422,15 +431,6 @@ components:
         details:
           type: object
           additionalProperties: true
-    HealthEnvelope:
-      type: object
-      additionalProperties: false
-      required: [data, correlationId]
-      properties:
-        data:
-          $ref: "#/components/schemas/Health"
-        correlationId:
-          type: string
     ProductEnvelope:
       type: object
       additionalProperties: false
