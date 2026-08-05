@@ -1,56 +1,93 @@
 service: SERVICE-CATALOG-API
-entryPoint: src/index.ts
+entryPoint: src/Catalog.Api/Program.cs
+publicContract: openapi/catalog-api.yaml
 
-layers:
-  domain:
-    path: src/domain
+components:
+  contracts:
+    project: src/Catalog.Contracts/Catalog.Contracts.csproj
     responsibilities:
-      - entities
-      - business-rules
+      - stable-http-contracts
     allowedDependencies: []
-  application:
-    path: src/application
-    responsibilities:
-      - use-cases
-      - ports
-    allowedDependencies:
-      - domain
-  infrastructure:
-    path: src/infrastructure
-    responsibilities:
-      - cloudflare-runtime-adapters
-      - d1-repositories
-    allowedDependencies:
-      - application
-      - domain
   api:
-    path: src/api
+    project: src/Catalog.Api/Catalog.Api.csproj
     responsibilities:
-      - http-routing
-      - request-validation
-      - response-translation
+      - aspnet-core-entry-point
+      - dependency-composition
+      - http-translation
+      - middleware
+      - health
+      - development-openapi
     allowedDependencies:
-      - application
-      - domain
-      - infrastructure
+      - contracts
+      - managers-when-use-cases-exist
+  managers:
+    project: src/Catalog.Managers/Catalog.Managers.csproj
+    responsibilities:
+      - future-use-case-coordination
+    allowedDependencies:
+      - contracts
+      - engines
+      - required-accessors
+  engines:
+    project: src/Catalog.Engines/Catalog.Engines.csproj
+    responsibilities:
+      - future-deterministic-business-rules
+    allowedDependencies:
+      - contracts-when-required
+  accessors:
+    project: src/Catalog.Accessors/Catalog.Accessors.csproj
+    responsibilities:
+      - future-sql-access
+      - future-file-access
+      - future-api-access
+      - future-information-container-access
+    allowedDependencies:
+      - required-provider-libraries
 
 forbiddenDependencies:
-  - from: domain
+  - from: contracts
     to:
-      - hono
-      - cloudflare
-      - d1
-  - from: application
+      - api
+      - managers
+      - engines
+      - accessors
+      - aspnet-core
+      - azure
+      - persistence
+  - from: engines
     to:
-      - infrastructure
-      - hono
+      - api
+      - accessors
+      - aspnet-core
+      - entity-framework-core
+      - azure
+      - sql
+  - from: managers
+    to:
+      - aspnet-core
+  - from: api
+    to:
+      - direct-accessors-for-use-cases
+
+endpoints:
+  implemented:
+    - method: GET
+      path: /health
+  pending:
+    - method: POST
+      path: /products
+    - method: GET
+      path: /products
+    - method: GET
+      path: /products/{id}
+    - method: PATCH
+      path: /products/{id}/status
+    - method: POST
+      path: /categories
+    - method: GET
+      path: /categories
 
 persistence:
-  type: cloudflare-d1
-  binding: DB
-  migrations: migrations
-
-exposedServices:
-  - id: SERVICE-CATALOG-API
-    protocol: http
-    contract: openapi/catalog-api.yaml
+  status: pending
+  boundary: Catalog.Accessors
+  providers: []

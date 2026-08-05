@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Catalog.Engines</AssemblyName>
+    <RootNamespace>Catalog.Engines</RootNamespace>
+    <Description>Catalog deterministic business-rule boundary; no rules are implemented yet.</Description>
+  </PropertyGroup>
+</Project>

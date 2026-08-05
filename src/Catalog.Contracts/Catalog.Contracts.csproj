@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Catalog.Contracts</AssemblyName>
+    <RootNamespace>Catalog.Contracts</RootNamespace>
+    <Description>Stable HTTP contracts shared by the Catalog service.</Description>
+  </PropertyGroup>
+</Project>

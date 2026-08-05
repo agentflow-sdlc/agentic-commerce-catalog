@@ -1,9 +1,0 @@
-extends:
-  - recommended
-
-rules:
-  # The repository intentionally grants no license during the bootstrap.
-  info-license-strict: off
-  # Health and collection reads have no truthful client-error response in this
-  # unauthenticated bootstrap. Their unexpected failures are documented as 500.
-  operation-4xx-response: off

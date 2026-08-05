@@ -1,28 +1,46 @@
 id: REPO-COMMERCE-CATALOG
 name: agentic-commerce-catalog
+repository: agentflow-sdlc/agentic-commerce-catalog
 domain: catalog
-type: cloudflare-worker
-language: typescript
+type: aspnet-core-api
+language: csharp
+framework: dotnet-10
 defaultBranch: main
+
+administration:
+  system: azure-devops
+  responsibilities:
+    - boards
+    - pipelines
+    - states
+    - evidence
+
+sourceControl:
+  system: github
+  responsibilities:
+    - repository
+    - branches
+    - commits
+    - pull-requests
+
+ciCd:
+  system: azure-pipelines
+  definition: azure-pipelines.yml
 
 services:
   - SERVICE-CATALOG-API
 
 commands:
-  install: npm ci
-  dev: npm run dev
-  typecheck: npm run typecheck
-  lint: npm run lint
-  test: npm test
-  check: npm run check
-  migrateLocal: npm run db:migrate:local
-  migrateRemote: npm run db:migrate:remote
-  deploy: npm run deploy
-  verifyHealth: npm run verify:health
+  restore: dotnet restore Catalog.sln
+  build: dotnet build Catalog.sln --configuration Release --no-restore
+  test: dotnet test Catalog.sln --configuration Release --no-build
+  formatCheck: dotnet format Catalog.sln --verify-no-changes --no-restore
+  openApiValidation: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
 
 qualityGates:
-  - typecheck
-  - lint
-  - unit-tests
-  - integration-tests
+  - restore
+  - build
+  - api-tests
+  - architecture-tests
+  - formatting
   - openapi-validation

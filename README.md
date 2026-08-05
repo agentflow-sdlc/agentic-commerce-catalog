@@ -1,151 +1,120 @@
 # Agentic Commerce Catalog
 
-`agentic-commerce-catalog` is the Catalog service bootstrap for the Agentic SDLC MVP. It exposes a small product and category API on Cloudflare Workers, persists data in Cloudflare D1, and keeps business rules isolated from platform concerns.
+`agentic-commerce-catalog` is the Catalog service for the Agentic SDLC MVP. This phase establishes its .NET 10, ASP.NET Core, and IDesign foundation while preserving the prior Product and Category contract for later vertical slices.
 
-## Current MVP status
+Azure DevOps administers Boards, Pipelines, states, and evidence. GitHub stores the repository, branches, commits, and pull requests. Azure is the future execution platform; this repository does not deploy Azure resources yet.
 
-The repository currently provides:
+## Current status
 
-- Product creation, listing, retrieval, activation, and deactivation.
-- Category creation and listing.
-- Optional product-to-category association.
-- Duplicate SKU and normalized category-name protection.
-- Consistent error envelopes and request correlation IDs.
-- D1 migrations, local integration tests, an OpenAPI contract, and pull-request CI.
-- Reproducible Cloudflare deployment automation with remote migrations and a public health check.
+Only one functional endpoint is implemented in .NET:
 
-Agents, Cloudflare Workflows, search, inventory, orders, authentication, and external knowledge integrations remain outside this bootstrap.
+```http
+GET /health
+```
+
+```json
+{
+  "status": "healthy",
+  "service": "catalog-api",
+  "version": "0.1.0"
+}
+```
+
+Product and Category operations remain documented in OpenAPI and will be ported in the next vertical slice. There is no persistence, database provider, Azure infrastructure, authentication, agent, or orchestration runtime.
 
 ## Architecture
 
-The code uses explicit dependency boundaries:
+| Project | Current responsibility |
+| --- | --- |
+| `Catalog.Contracts` | Stable HTTP contracts required by implemented behavior. |
+| `Catalog.Api` | ASP.NET Core entry point, HTTP translation, middleware, health, and development OpenAPI. |
+| `Catalog.Managers` | Future use-case coordination boundary; no use cases yet. |
+| `Catalog.Engines` | Future deterministic Product and Category rules; no rules yet. |
+| `Catalog.Accessors` | Future access to SQL, files, APIs, object stores, and other information containers; no accessors yet. |
 
-```text
-src/
-├── domain/          # Entities and business invariants; no platform dependencies
-├── application/     # Use cases and repository/runtime ports
-├── infrastructure/  # Cloudflare runtime and D1 adapters
-├── api/             # Hono routes, validation, and HTTP translation
-└── index.ts          # Worker entry point
-```
+Managers, Engines, and Accessors contain only assembly markers needed to execute architecture tests. They do not contain placeholder services, repositories, or provider abstractions.
 
-The domain layer does not import Hono, Cloudflare APIs, or D1. The application layer depends only on domain types and its own ports. `npm run validate:architecture` enforces these boundaries.
-
-Machine-readable repository, architecture, and quality-gate metadata is stored in [`.agentic/`](.agentic/).
+See the concrete [system design](docs/idesign/system-design.md), [project design](docs/idesign/project-design.md), [use cases](docs/idesign/use-cases.md), and [volatility analysis](docs/idesign/volatility-analysis.md).
 
 ## Requirements
 
-- Node.js 22.12 or newer (the repository includes `.nvmrc`).
-- npm 10.
-- A Cloudflare account is needed only to create a remote D1 database or deploy the Worker.
+- .NET SDK `10.0.302`, pinned by `global.json`.
+- Access to NuGet.org during restore.
 
-Local tests use an isolated Miniflare D1 database and do not require Cloudflare credentials.
-
-## Install
+## Validate the repository
 
 ```bash
-npm ci
+dotnet restore Catalog.sln
+dotnet build Catalog.sln --configuration Release --no-restore
+dotnet test Catalog.sln --configuration Release --no-build
+dotnet format Catalog.sln --verify-no-changes --no-restore
 ```
 
-Generate or verify Worker binding types:
+Validate the preserved OpenAPI source explicitly:
 
 ```bash
-npm run types:check
+dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj \
+  --configuration Release \
+  --no-build \
+  --filter Category=OpenApi
 ```
 
-## Local development
+Package versions are centralized in `Directory.Packages.props`. Nullable references, implicit usings, analyzers, deterministic builds, and warnings-as-errors are configured in `Directory.Build.props`.
 
-Apply the versioned migrations to Wrangler's local D1 database:
+## Run locally
 
 ```bash
-npm run db:migrate:local
+dotnet run --project src/Catalog.Api/Catalog.Api.csproj
 ```
 
-Start the local Worker:
+Use the URL printed by ASP.NET Core, then request `/health`. Every response receives an `X-Correlation-ID`; a valid caller-provided value is propagated. Unexpected exceptions are logged and translated to a stable response without stack traces.
 
-```bash
-npm run dev
-```
+ASP.NET Core generates runtime OpenAPI at `/openapi/v1.json` in the Development environment. It reflects only implemented runtime endpoints.
 
-The default local URL is `http://localhost:8787`. Check it with:
+## Public OpenAPI contract
 
-```bash
-curl http://localhost:8787/health
-```
+[`openapi/catalog-api.yaml`](openapi/catalog-api.yaml) remains the technology-neutral public contract. It marks `/health` as `implemented` and all Product and Category operations as `pending-dotnet`. The pending routes, requests, responses, and domain schemas remain available for the next slices.
 
-## D1 configuration
+OpenAPI syntax is validated with the Microsoft OpenAPI.NET YAML reader in `Catalog.Api.Tests` and in Azure Pipelines.
 
-The Worker expects one D1 binding named `DB`. The binding and migration directory are declared in `wrangler.jsonc`.
+## Tests
 
-The production resource is `catalog-data`. Remote migrations and deployments require authenticated Wrangler access. See [`docs/deployment-cloudflare.md`](docs/deployment-cloudflare.md) for local, manual, and continuous deployment procedures, required GitHub secrets, health verification, logs, and rollback guidance.
+`Catalog.Api.Tests` uses `WebApplicationFactory<Program>` and ASP.NET Core TestServer; no external process or database is required. It verifies health JSON, service metadata, correlation generation and propagation, 404 behavior, development OpenAPI, safe unexpected errors, and source OpenAPI validity.
 
-The deployed Catalog API is available at `https://catalog-api.agentflow-sdlc-agentic-commerce-catalog.workers.dev`.
+`Catalog.Architecture.Tests` loads every production assembly and enforces the IDesign dependency boundaries, including the rule that Engines cannot use Accessors and the API cannot bypass Managers to reach information containers.
 
-## API
+## Azure Pipelines
 
-| Method  | Path                    | Purpose                           |
-| ------- | ----------------------- | --------------------------------- |
-| `GET`   | `/health`               | Report service health.            |
-| `POST`  | `/products`             | Create a product.                 |
-| `GET`   | `/products`             | List products.                    |
-| `GET`   | `/products/{id}`        | Retrieve a product.               |
-| `PATCH` | `/products/{id}/status` | Activate or deactivate a product. |
-| `POST`  | `/categories`           | Create a category.                |
-| `GET`   | `/categories`           | List categories.                  |
+`azure-pipelines.yml` validates pull requests and changes to `main`. It installs the SDK from `global.json`, restores, builds Release, runs tests, publishes TRX results, verifies formatting, validates OpenAPI, and publishes diagnostic test artifacts on failure. It contains no deployment, service connection, infrastructure, or secret configuration.
 
-The complete OpenAPI 3.1 contract, including request/response schemas and error examples, is in [`openapi/catalog-api.yaml`](openapi/catalog-api.yaml).
+## Previous baseline
 
-All responses include an `X-Correlation-ID` header and the same value in the JSON envelope. A valid caller-provided ID is preserved; otherwise the Worker creates one.
-
-## Domain rules
-
-- SKU and product name are required.
-- SKUs are trimmed, normalized to uppercase, and unique.
-- Price must be finite and greater than or equal to zero.
-- New products are active by default and can be deactivated or reactivated.
-- Category name is required and unique after trimming, collapsing whitespace, and lowercasing.
-- Category association is optional, but a supplied category must exist.
-
-Database constraints reinforce the uniqueness, price, status, and foreign-key rules.
-
-## Commands
-
-| Command                         | Purpose                                               |
-| ------------------------------- | ----------------------------------------------------- |
-| `npm run dev`                   | Start Wrangler locally.                               |
-| `npm run typecheck`             | Verify generated Worker types and strict TypeScript.  |
-| `npm run lint`                  | Run ESLint with zero warnings.                        |
-| `npm run format:check`          | Check Prettier formatting.                            |
-| `npm run validate:architecture` | Enforce core dependency boundaries.                   |
-| `npm run validate:openapi`      | Lint the OpenAPI contract.                            |
-| `npm run test:unit`             | Run domain unit tests.                                |
-| `npm run test:integration`      | Run the Worker against isolated local D1.             |
-| `npm test`                      | Run all tests.                                        |
-| `npm run check`                 | Run every pull-request quality gate.                  |
-| `npm run db:migrate:local`      | Apply Catalog migrations to isolated local D1.        |
-| `npm run db:migrate:remote`     | Apply pending migrations to production D1.            |
-| `npm run deploy`                | Deploy `catalog-api` with the local Wrangler version. |
-| `npm run verify:health`         | Verify the configured public Catalog URL.             |
-
-## Tests and CI
-
-Vitest unit tests cover domain invariants. Worker integration tests apply the real SQL migrations to an isolated local D1 instance and invoke the exported Worker's `fetch` handler. Pull requests run:
-
-```bash
-npm ci
-npm run check
-```
+The TypeScript, Hono, Cloudflare Workers, and D1 proof of concept is preserved at tag `archive/typescript-cloudflare-poc`. Its behavior, rules, schema, tests, scripts, and compatibility requirements are recorded in [`docs/migration/typescript-cloudflare-baseline.md`](docs/migration/typescript-cloudflare-baseline.md). Historical D1 migrations are retained under `docs/migration/d1/` as evidence, not active persistence.
 
 ## Repository structure
 
 ```text
-.agentic/             Agent-readable repository metadata
-.github/workflows/    Pull-request CI
-migrations/           Ordered D1 schema migrations
-openapi/              HTTP API contract
-scripts/              Local validation utilities
-src/                  Worker implementation
-tests/unit/           Domain tests
-tests/integration/    Worker and local D1 tests
-docs/                 Operational and deployment guides
+.agentic/                         Machine-readable repository and architecture metadata
+src/Catalog.Contracts/           Stable shared contracts
+src/Catalog.Api/                 ASP.NET Core entry point and middleware
+src/Catalog.Managers/            Future use-case coordination boundary
+src/Catalog.Engines/             Future business-rule boundary
+src/Catalog.Accessors/           Future information-container access boundary
+tests/Catalog.Api.Tests/         In-memory HTTP, middleware, and OpenAPI tests
+tests/Catalog.Architecture.Tests/ Executable dependency rules
+openapi/                          Preserved public HTTP contract
+docs/idesign/                     Concrete IDesign documentation
+docs/migration/                   Historical baseline and D1 evidence
+azure-pipelines.yml               Pull-request and main validation
 ```
+
+## Migration phases
+
+1. TypeScript/Cloudflare Catalog proof of concept — archived.
+2. .NET 10 Catalog and IDesign foundation — this phase.
+3. Implement the Product vertical slice — next.
+4. Port Category behavior and approved persistence/infrastructure in separately reviewed work.
+
+## Out of scope
+
+Product, Category, EF Core, SQL, Azure SQL, D1, Pulumi, Container Apps, Functions, Key Vault, remote Application Insights, Microsoft Agent Framework, Durable Task, agentic workflows, Azure DevOps or GitHub integrations, Playwright, authentication, search, inventory, and orders are not implemented in this phase.

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <AssemblyName>Catalog.Api</AssemblyName>
+    <RootNamespace>Catalog.Api</RootNamespace>
+    <Description>ASP.NET Core HTTP entry point and composition root for Catalog.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Catalog.Contracts\Catalog.Contracts.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+</Project>
