@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Catalog.Accessors</AssemblyName>
+    <RootNamespace>Catalog.Accessors</RootNamespace>
+    <Description>Technical access boundary for SQL, files, APIs, and other information containers; no accessors are implemented yet.</Description>
+  </PropertyGroup>
+</Project>

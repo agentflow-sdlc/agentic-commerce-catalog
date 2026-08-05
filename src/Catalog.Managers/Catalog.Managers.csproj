@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Catalog.Managers</AssemblyName>
+    <RootNamespace>Catalog.Managers</RootNamespace>
+    <Description>Catalog use-case coordination boundary; no use cases are implemented yet.</Description>
+  </PropertyGroup>
+</Project>
