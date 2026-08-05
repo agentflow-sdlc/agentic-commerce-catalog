@@ -76,7 +76,7 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
     }
 
     [Fact]
-    public async Task DevelopmentOpenApiContainsOnlyTheImplementedBusinessEndpoint()
+    public async Task DevelopmentOpenApiContainsOnlyImplementedEndpoints()
     {
         using var response = await _client.GetAsync(
             "/openapi/v1.json",
@@ -85,7 +85,7 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("/health", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("/products", body, StringComparison.Ordinal);
+        Assert.Contains("/products", body, StringComparison.Ordinal);
         Assert.DoesNotContain("/categories", body, StringComparison.Ordinal);
     }
 }

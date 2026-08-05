@@ -2,6 +2,6 @@
   <PropertyGroup>
     <AssemblyName>Catalog.Engines</AssemblyName>
     <RootNamespace>Catalog.Engines</RootNamespace>
-    <Description>Catalog deterministic business-rule boundary; no rules are implemented yet.</Description>
+    <Description>Catalog deterministic business-rule boundary and provider-neutral domain ports.</Description>
   </PropertyGroup>
 </Project>

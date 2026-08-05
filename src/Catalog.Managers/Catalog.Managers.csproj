@@ -2,6 +2,11 @@
   <PropertyGroup>
     <AssemblyName>Catalog.Managers</AssemblyName>
     <RootNamespace>Catalog.Managers</RootNamespace>
-    <Description>Catalog use-case coordination boundary; no use cases are implemented yet.</Description>
+    <Description>Catalog use-case coordination boundary.</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Catalog.Engines\Catalog.Engines.csproj" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
 </Project>

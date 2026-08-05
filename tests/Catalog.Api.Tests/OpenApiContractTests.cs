@@ -22,7 +22,12 @@ public sealed class OpenApiContractTests
         Assert.NotNull(result.Document);
         Assert.NotNull(result.Diagnostic);
         Assert.Empty(result.Diagnostic.Errors);
-        Assert.Contains("x-implementation-status: implemented", source, StringComparison.Ordinal);
+        Assert.Equal(
+            3,
+            source.Split("x-implementation-status: implemented", StringSplitOptions.None).Length - 1);
+        Assert.Equal(
+            4,
+            source.Split("x-implementation-status: pending-dotnet", StringSplitOptions.None).Length - 1);
         Assert.Contains("x-implementation-status: pending-dotnet", source, StringComparison.Ordinal);
     }
 }
