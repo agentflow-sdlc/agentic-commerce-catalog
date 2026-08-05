@@ -31,16 +31,22 @@ services:
   - SERVICE-CATALOG-API
 
 commands:
+  toolRestore: dotnet tool restore
   restore: dotnet restore Catalog.sln
   build: dotnet build Catalog.sln --configuration Release --no-restore
   test: dotnet test Catalog.sln --configuration Release --no-build
+  sqlIntegrationTest: RUN_SQL_SERVER_TESTS=true dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj --configuration Release
   formatCheck: dotnet format Catalog.sln --verify-no-changes --no-restore
   openApiValidation: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
+  migrationValidation: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --configuration Release --no-build
 
 qualityGates:
   - restore
   - build
   - api-tests
+  - product-tests
+  - sql-integration-tests
   - architecture-tests
   - formatting
   - openapi-validation
+  - migration-validation
