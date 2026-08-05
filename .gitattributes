@@ -1,2 +1,2 @@
 * text=auto eol=lf
-worker-configuration.d.ts -whitespace
+*.sln text eol=crlf

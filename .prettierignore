@@ -1,6 +1,0 @@
-node_modules/
-.wrangler/
-coverage/
-dist/
-package-lock.json
-worker-configuration.d.ts
