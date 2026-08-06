@@ -2,6 +2,8 @@ using Catalog.Accessors.Sql;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.MsSql;
@@ -36,8 +38,26 @@ public sealed class SqlServerApiFixture : IAsyncLifetime
 
         using var scope = Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-        await dbContext.Database.MigrateAsync();
+        var migrations = dbContext.Database.GetMigrations().ToArray();
+        if (migrations.Length < 2)
+        {
+            throw new InvalidOperationException("Product and Category migrations are required.");
+        }
+
+        var migrator = dbContext.GetService<IMigrator>();
+        var initialProductMigration = migrations.Single(
+            migration => migration.EndsWith("_InitialProduct", StringComparison.Ordinal));
+        await migrator.MigrateAsync(initialProductMigration);
+        await migrator.MigrateAsync();
         Client = _factory.CreateClient();
+    }
+
+    public async Task ResetAsync()
+    {
+        using var scope = Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "DELETE FROM [Products]; DELETE FROM [Categories];");
     }
 
     public async Task DisposeAsync()

@@ -109,10 +109,15 @@ public sealed class DependencyRulesTests
     }
 
     [Fact]
-    public void ProductEndpointsDelegateWithoutCallingEnginesAccessorsOrEfCore()
+    public void CatalogEndpointsDelegateWithoutCallingEnginesAccessorsOrEfCore()
     {
-        var endpointType = ApiAssembly.GetType("Catalog.Api.ProductEndpoints", throwOnError: true)!;
-        var endpointTypes = GetTypeAndNestedTypes(endpointType).ToArray();
+        var endpointTypes = new[]
+            {
+                ApiAssembly.GetType("Catalog.Api.ProductEndpoints", throwOnError: true)!,
+                ApiAssembly.GetType("Catalog.Api.CategoryEndpoints", throwOnError: true)!,
+            }
+            .SelectMany(GetTypeAndNestedTypes)
+            .ToArray();
         var forbiddenAssemblies = new[]
         {
             "Catalog.Engines",
