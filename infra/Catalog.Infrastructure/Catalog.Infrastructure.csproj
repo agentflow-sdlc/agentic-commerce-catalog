@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Catalog.Infrastructure</AssemblyName>
+    <RootNamespace>Catalog.Infrastructure</RootNamespace>
+    <Description>Pulumi Azure Native infrastructure for the Catalog dev environment.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pulumi" />
+    <PackageReference Include="Pulumi.AzureNative" />
+  </ItemGroup>
+</Project>

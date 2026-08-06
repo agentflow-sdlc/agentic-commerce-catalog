@@ -1,0 +1,4 @@
+name: catalog
+runtime: dotnet
+description: Catalog development infrastructure on Azure.
+main: .

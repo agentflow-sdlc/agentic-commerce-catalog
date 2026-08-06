@@ -8,117 +8,299 @@ pr:
     include:
       - main
 
-pool:
-  vmImage: ubuntu-latest
+parameters:
+  - name: deployDev
+    displayName: Deploy the Azure dev environment after validation
+    type: boolean
+    default: false
+  - name: azureServiceConnection
+    displayName: Azure Resource Manager service connection
+    type: string
+    default: CONFIGURE_ME
+  - name: pulumiVersion
+    type: string
+    default: 3.255.0
 
 variables:
   buildConfiguration: Release
   testResultsDirectory: $(Build.ArtifactStagingDirectory)/test-results
 
-steps:
-  - checkout: self
-    clean: true
-    fetchDepth: 0
+stages:
+  - stage: Validate
+    displayName: Validate
+    jobs:
+      - job: ValidateCatalog
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            clean: true
+            fetchDepth: 0
+          - task: UseDotNet@2
+            displayName: Install .NET SDK from global.json
+            inputs:
+              packageType: sdk
+              useGlobalJson: true
+          - script: dotnet tool restore
+            displayName: Restore repository tools
+          - script: mkdir -p "$(testResultsDirectory)"
+            displayName: Prepare evidence directory
+          - script: dotnet restore Catalog.sln
+            displayName: Restore application packages
+          - script: dotnet build Catalog.sln --configuration $(buildConfiguration) --no-restore
+            displayName: Build application solution
+          - script: >-
+              dotnet test Catalog.sln
+              --configuration $(buildConfiguration)
+              --no-build
+              --logger "trx;LogFileName=Catalog.Tests.trx"
+              --results-directory "$(testResultsDirectory)"
+            displayName: Run unit, API, OpenAPI, and architecture tests
+          - script: docker version
+            displayName: Verify Docker for SQL integration tests
+          - script: >-
+              dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj
+              --configuration $(buildConfiguration)
+              --no-build
+              --logger "trx;LogFileName=Catalog.Sql.IntegrationTests.trx"
+              --results-directory "$(testResultsDirectory)"
+            displayName: Run isolated SQL Server integration tests
+            env:
+              RUN_SQL_SERVER_TESTS: "true"
+          - script: >-
+              dotnet ef migrations has-pending-model-changes
+              --project src/Catalog.Accessors/Catalog.Accessors.csproj
+              --startup-project src/Catalog.Api/Catalog.Api.csproj
+              --configuration $(buildConfiguration)
+              --no-build
+            displayName: Validate EF Core migration model
+          - script: >-
+              dotnet ef migrations script --idempotent
+              --project src/Catalog.Accessors/Catalog.Accessors.csproj
+              --startup-project src/Catalog.Api/Catalog.Api.csproj
+              --configuration $(buildConfiguration)
+              --no-build
+              --output "$(testResultsDirectory)/Catalog.Migrations.sql"
+            displayName: Generate idempotent migration evidence
+          - script: dotnet format Catalog.sln --verify-no-changes --no-restore
+            displayName: Verify formatting
+          - script: dotnet restore infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
+            displayName: Restore Pulumi C# packages
+          - script: dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration $(buildConfiguration) --no-restore
+            displayName: Build Pulumi C# project
+          - task: PublishTestResults@2
+            displayName: Publish test results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: VSTest
+              testResultsFiles: "$(testResultsDirectory)/**/*.trx"
+              failTaskOnFailedTests: true
+              failTaskOnMissingResultsFile: false
+              testRunTitle: Catalog validation
 
-  - task: UseDotNet@2
-    displayName: Install .NET SDK from global.json
-    inputs:
-      packageType: sdk
-      useGlobalJson: true
+  - stage: ProvisionFoundation
+    displayName: Provision Foundation
+    dependsOn: Validate
+    condition: and(succeeded(), eq(${{ parameters.deployDev }}, true), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Provision
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            clean: true
+          - bash: |
+              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
+              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+            displayName: Install pinned Pulumi CLI
+          - task: AzureCLI@2
+            displayName: Preview and provision foundation
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $context = & ./scripts/bootstrap-pulumi.ps1 -PassThru
+                Push-Location ./infra/Catalog.Infrastructure
+                try {
+                  $workloadEnabled = (& $context.PulumiPath config get catalog:deployWorkload 2>$null) -eq 'true'
+                  if (-not $workloadEnabled) {
+                    & $context.PulumiPath config set catalog:deployWorkload false --non-interactive
+                  }
+                  & $context.PulumiPath preview --non-interactive --diff
+                  if ($LASTEXITCODE -ne 0) { throw 'Foundation preview failed.' }
+                  & $context.PulumiPath up --yes --non-interactive
+                  if ($LASTEXITCODE -ne 0) { throw 'Foundation deployment failed.' }
+                }
+                finally {
+                  Pop-Location
+                }
+            env:
+              PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
+              CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
-  - script: dotnet tool restore
-    displayName: Restore repository tools
+  - stage: BuildImages
+    displayName: Build Images
+    dependsOn: ProvisionFoundation
+    condition: succeeded()
+    jobs:
+      - job: Build
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            clean: true
+          - bash: |
+              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
+              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+            displayName: Install pinned Pulumi CLI
+          - task: AzureCLI@2
+            name: BuildImageReferences
+            displayName: Build and lock immutable ACR images
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $context = & ./scripts/bootstrap-pulumi.ps1 -PassThru
+                Push-Location ./infra/Catalog.Infrastructure
+                try {
+                  $registry = & $context.PulumiPath stack output containerRegistryName
+                  $server = & $context.PulumiPath stack output containerRegistryLoginServer
+                }
+                finally {
+                  Pop-Location
+                }
+                $tag = "$(Build.SourceVersion)".Substring(0, 12) + "-$(Build.BuildId)"
+                az acr build --registry $registry --image "catalog-api:$tag" --file Dockerfile --platform linux/amd64 .
+                if ($LASTEXITCODE -ne 0) { throw 'API image build failed.' }
+                az acr build --registry $registry --image "catalog-database-migrator:$tag" --file src/Catalog.DatabaseMigrator/Dockerfile --platform linux/amd64 .
+                if ($LASTEXITCODE -ne 0) { throw 'Migrator image build failed.' }
+                az acr repository update --name $registry --image "catalog-api:$tag" --write-enabled false --delete-enabled false --output none
+                az acr repository update --name $registry --image "catalog-database-migrator:$tag" --write-enabled false --delete-enabled false --output none
+                Write-Host "##vso[task.setvariable variable=apiImage;isOutput=true]$server/catalog-api:$tag"
+                Write-Host "##vso[task.setvariable variable=migratorImage;isOutput=true]$server/catalog-database-migrator:$tag"
+            env:
+              PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
+              CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
-  - script: mkdir -p "$(testResultsDirectory)"
-    displayName: Prepare diagnostic artifact directory
+  - stage: DeployWorkload
+    displayName: Deploy Workload
+    dependsOn: BuildImages
+    condition: succeeded()
+    variables:
+      apiImage: $[ stageDependencies.BuildImages.Build.outputs['BuildImageReferences.apiImage'] ]
+      migratorImage: $[ stageDependencies.BuildImages.Build.outputs['BuildImageReferences.migratorImage'] ]
+    jobs:
+      - job: Deploy
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            clean: true
+          - bash: |
+              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
+              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+            displayName: Install pinned Pulumi CLI
+          - task: AzureCLI@2
+            displayName: Preview and deploy workloads
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $context = & ./scripts/bootstrap-pulumi.ps1 -PassThru
+                Push-Location ./infra/Catalog.Infrastructure
+                try {
+                  & $context.PulumiPath config set catalog:apiImage '$(apiImage)' --non-interactive
+                  & $context.PulumiPath config set catalog:migratorImage '$(migratorImage)' --non-interactive
+                  & $context.PulumiPath config set catalog:deployWorkload true --non-interactive
+                  & $context.PulumiPath preview --non-interactive --diff
+                  if ($LASTEXITCODE -ne 0) { throw 'Workload preview failed.' }
+                  & $context.PulumiPath up --yes --non-interactive
+                  if ($LASTEXITCODE -ne 0) { throw 'Workload deployment failed.' }
+                }
+                finally {
+                  Pop-Location
+                }
+            env:
+              PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
+              CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
-  - script: dotnet restore Catalog.sln
-    displayName: Restore packages
+  - stage: RunMigrations
+    displayName: Run Migrations
+    dependsOn: DeployWorkload
+    condition: succeeded()
+    jobs:
+      - job: Migrate
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            clean: true
+          - bash: |
+              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
+              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+            displayName: Install pinned Pulumi CLI
+          - task: AzureCLI@2
+            displayName: Execute database migrator job
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: pwsh ./scripts/run-migrations-dev.ps1
+            env:
+              PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
+              CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
-  - script: dotnet build Catalog.sln --configuration $(buildConfiguration) --no-restore
-    displayName: Build solution
+  - stage: SmokeTests
+    displayName: Smoke Tests
+    dependsOn: RunMigrations
+    condition: succeeded()
+    jobs:
+      - job: Smoke
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            clean: true
+          - bash: |
+              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
+              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+            displayName: Install pinned Pulumi CLI
+          - task: AzureCLI@2
+            displayName: Run read-only smoke tests
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: pwsh ./scripts/smoke-test-dev.ps1
+            env:
+              PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
+              CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
+          - task: PublishPipelineArtifact@1
+            displayName: Stage smoke evidence
+            inputs:
+              targetPath: artifacts/deployment/dev
+              artifact: catalog-smoke-raw
+              publishLocation: pipeline
 
-  - script: >-
-      dotnet test tests/Catalog.Product.Tests/Catalog.Product.Tests.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --logger "trx;LogFileName=Catalog.Product.Tests.trx"
-      --results-directory "$(testResultsDirectory)"
-    displayName: Run Product and Category unit tests
-
-  - script: >-
-      dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --filter Category!=OpenApi
-      --logger "trx;LogFileName=Catalog.Api.Tests.trx"
-      --results-directory "$(testResultsDirectory)"
-    displayName: Run API tests
-
-  - script: >-
-      dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --logger "trx;LogFileName=Catalog.Architecture.Tests.trx"
-      --results-directory "$(testResultsDirectory)"
-    displayName: Run architecture tests
-
-  - script: docker version
-    displayName: Verify Docker for SQL Server integration tests
-
-  - script: >-
-      dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --logger "trx;LogFileName=Catalog.Product.IntegrationTests.trx"
-      --results-directory "$(testResultsDirectory)"
-    displayName: Apply clean migration chain and run SQL Server integration tests
-    env:
-      RUN_SQL_SERVER_TESTS: "true"
-
-  - script: >-
-      dotnet ef migrations has-pending-model-changes
-      --project src/Catalog.Accessors/Catalog.Accessors.csproj
-      --startup-project src/Catalog.Api/Catalog.Api.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-    displayName: Validate EF Core migration model
-
-  - script: >-
-      dotnet ef migrations script --idempotent
-      --project src/Catalog.Accessors/Catalog.Accessors.csproj
-      --startup-project src/Catalog.Api/Catalog.Api.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --output "$(testResultsDirectory)/Catalog.Migrations.sql"
-    displayName: Generate idempotent migration evidence
-
-  - script: >-
-      dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --filter Category=OpenApi
-      --logger "trx;LogFileName=Catalog.OpenApi.Tests.trx"
-      --results-directory "$(testResultsDirectory)"
-    displayName: Validate OpenAPI contract
-
-  - script: dotnet format Catalog.sln --verify-no-changes --no-restore
-    displayName: Verify formatting
-
-  - task: PublishTestResults@2
-    displayName: Publish test results
-    condition: succeededOrFailed()
-    inputs:
-      testResultsFormat: VSTest
-      testResultsFiles: "$(testResultsDirectory)/**/*.trx"
-      failTaskOnFailedTests: true
-      failTaskOnMissingResultsFile: false
-      testRunTitle: Catalog .NET validation
-
-  - task: PublishPipelineArtifact@1
-    displayName: Publish failure diagnostics
-    condition: failed()
-    inputs:
-      targetPath: $(testResultsDirectory)
-      artifact: catalog-test-diagnostics
-      publishLocation: pipeline
+  - stage: PublishEvidence
+    displayName: Publish Evidence
+    dependsOn: SmokeTests
+    condition: succeeded()
+    jobs:
+      - job: Publish
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: catalog-smoke-raw
+              path: $(Pipeline.Workspace)/catalog-smoke
+          - task: PublishPipelineArtifact@1
+            displayName: Publish deployment evidence
+            inputs:
+              targetPath: $(Pipeline.Workspace)/catalog-smoke
+              artifact: catalog-dev-deployment-evidence
+              publishLocation: pipeline
