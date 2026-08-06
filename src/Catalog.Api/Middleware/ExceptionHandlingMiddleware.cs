@@ -1,4 +1,5 @@
 using Catalog.Contracts;
+using Catalog.Managers.Categories;
 using Catalog.Managers.Products;
 
 namespace Catalog.Api.Middleware;
@@ -69,8 +70,17 @@ public sealed class ExceptionHandlingMiddleware
             case ProductNotFoundException notFound:
                 CatalogApiLog.ProductNotFound(_logger, notFound.ProductId, correlationId);
                 break;
+            case CategoryRequestException validation:
+                CatalogApiLog.CategoryValidationFailed(_logger, validation.Code, correlationId);
+                break;
+            case CategoryConflictException conflict:
+                CatalogApiLog.CategoryNameConflict(_logger, conflict.NormalizedName, correlationId);
+                break;
+            case CategoryNotFoundException notFound:
+                CatalogApiLog.CategoryNotFound(_logger, notFound.CategoryId, correlationId);
+                break;
             case BadHttpRequestException:
-                CatalogApiLog.ProductRequestSyntaxInvalid(_logger, correlationId);
+                CatalogApiLog.RequestSyntaxInvalid(_logger, correlationId);
                 break;
         }
     }
@@ -106,6 +116,24 @@ public sealed class ExceptionHandlingMiddleware
                 "PRODUCT_SKU_ALREADY_EXISTS",
                 conflict.Message,
                 new Dictionary<string, object?> { ["sku"] = conflict.Sku },
+                true),
+            CategoryRequestException => (
+                StatusCodes.Status400BadRequest,
+                "CATEGORY_VALIDATION_FAILED",
+                "The category request is invalid.",
+                new Dictionary<string, object?>(),
+                true),
+            CategoryConflictException conflict => (
+                StatusCodes.Status409Conflict,
+                "CATEGORY_NAME_ALREADY_EXISTS",
+                conflict.Message,
+                new Dictionary<string, object?> { ["normalizedName"] = conflict.NormalizedName },
+                true),
+            CategoryNotFoundException notFound => (
+                StatusCodes.Status404NotFound,
+                "CATEGORY_NOT_FOUND",
+                notFound.Message,
+                new Dictionary<string, object?> { ["categoryId"] = notFound.CategoryId },
                 true),
             _ => (
                 StatusCodes.Status500InternalServerError,

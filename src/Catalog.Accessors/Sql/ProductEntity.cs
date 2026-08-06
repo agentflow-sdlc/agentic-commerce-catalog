@@ -12,6 +12,8 @@ internal sealed class ProductEntity
 
     public decimal Price { get; set; }
 
+    public string? CategoryId { get; set; }
+
     public bool IsActive { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }

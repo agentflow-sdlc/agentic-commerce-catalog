@@ -10,7 +10,10 @@ public interface IProductEngine
         string? name,
         string? description,
         decimal? price,
+        string? categoryId,
         DateTimeOffset timestamp);
+
+    Product ChangeStatus(Product product, bool? isActive, DateTimeOffset timestamp);
 }
 
 public sealed class ProductEngine : IProductEngine
@@ -42,6 +45,7 @@ public sealed class ProductEngine : IProductEngine
         string? name,
         string? description,
         decimal? price,
+        string? categoryId,
         DateTimeOffset timestamp)
     {
         var normalizedId = NormalizeId(id);
@@ -49,6 +53,7 @@ public sealed class ProductEngine : IProductEngine
             .ToUpperInvariant();
         var normalizedName = RequireText(name, "PRODUCT_NAME_REQUIRED", "Product name is required.");
         var normalizedDescription = NormalizeOptionalText(description);
+        var normalizedCategoryId = NormalizeOptionalCategoryId(categoryId);
 
         EnsureMaximumLength(
             normalizedSku,
@@ -105,9 +110,28 @@ public sealed class ProductEngine : IProductEngine
             normalizedName,
             normalizedDescription,
             price.Value,
+            normalizedCategoryId,
             true,
             utcTimestamp,
             utcTimestamp);
+    }
+
+    public Product ChangeStatus(Product product, bool? isActive, DateTimeOffset timestamp)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+
+        if (isActive is null)
+        {
+            throw new ProductValidationException(
+                "PRODUCT_STATUS_REQUIRED",
+                "Product status is required.");
+        }
+
+        return product with
+        {
+            IsActive = isActive.Value,
+            UpdatedAt = timestamp.ToUniversalTime(),
+        };
     }
 
     private static string RequireText(string? value, string code, string message)
@@ -122,6 +146,24 @@ public sealed class ProductEngine : IProductEngine
     {
         var normalized = value?.Trim();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string? NormalizeOptionalCategoryId(string? categoryId)
+    {
+        if (categoryId is null)
+        {
+            return null;
+        }
+
+        var normalized = categoryId.Trim();
+        if (normalized.Length is 0 or > 128)
+        {
+            throw new ProductValidationException(
+                "PRODUCT_CATEGORY_ID_INVALID",
+                "Category ID must contain between 1 and 128 characters.");
+        }
+
+        return normalized;
     }
 
     private static void EnsureMaximumLength(

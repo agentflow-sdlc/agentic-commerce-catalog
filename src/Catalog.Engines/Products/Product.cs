@@ -6,6 +6,7 @@ public sealed record Product(
     string Name,
     string? Description,
     decimal Price,
+    string? CategoryId,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

@@ -6,5 +6,13 @@ public interface IProductAccessor
 
     Task<Product?> FindByIdAsync(string id, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<Product>> ListAsync(CancellationToken cancellationToken);
+
     Task AddAsync(Product product, CancellationToken cancellationToken);
+
+    Task<bool> UpdateStatusAsync(
+        string id,
+        bool isActive,
+        DateTimeOffset updatedAt,
+        CancellationToken cancellationToken);
 }

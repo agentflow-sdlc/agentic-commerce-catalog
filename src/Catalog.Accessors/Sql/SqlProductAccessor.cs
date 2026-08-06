@@ -23,6 +23,14 @@ public sealed class SqlProductAccessor(CatalogDbContext dbContext) : IProductAcc
         return entity is null ? null : Map(entity);
     }
 
+    public async Task<IReadOnlyList<Product>> ListAsync(CancellationToken cancellationToken) =>
+        await dbContext.Products
+            .AsNoTracking()
+            .OrderByDescending(product => product.CreatedAt)
+            .ThenByDescending(product => product.Id)
+            .Select(product => Map(product))
+            .ToArrayAsync(cancellationToken);
+
     public async Task AddAsync(Product product, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(product);
@@ -38,7 +46,26 @@ public sealed class SqlProductAccessor(CatalogDbContext dbContext) : IProductAcc
         {
             throw new ProductSkuAlreadyExistsException(product.Sku, exception);
         }
+        catch (DbUpdateException exception)
+            when (product.CategoryId is not null
+                && exception.InnerException is SqlException { Number: 547 })
+        {
+            throw new ProductCategoryNotFoundException(product.CategoryId, exception);
+        }
     }
+
+    public async Task<bool> UpdateStatusAsync(
+        string id,
+        bool isActive,
+        DateTimeOffset updatedAt,
+        CancellationToken cancellationToken) =>
+        await dbContext.Products
+            .Where(product => product.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(product => product.IsActive, isActive)
+                    .SetProperty(product => product.UpdatedAt, updatedAt),
+                cancellationToken) > 0;
 
     private static Product Map(ProductEntity entity) => new(
         entity.Id,
@@ -46,6 +73,7 @@ public sealed class SqlProductAccessor(CatalogDbContext dbContext) : IProductAcc
         entity.Name,
         entity.Description,
         entity.Price,
+        entity.CategoryId,
         entity.IsActive,
         entity.CreatedAt,
         entity.UpdatedAt);
@@ -57,6 +85,7 @@ public sealed class SqlProductAccessor(CatalogDbContext dbContext) : IProductAcc
         Name = product.Name,
         Description = product.Description,
         Price = product.Price,
+        CategoryId = product.CategoryId,
         IsActive = product.IsActive,
         CreatedAt = product.CreatedAt,
         UpdatedAt = product.UpdatedAt,

@@ -26,10 +26,19 @@ internal static class ProductEndpoints
                             request.Sku,
                             request.Name,
                             request.Description,
-                            request.Price),
+                            request.Price,
+                            request.CategoryId),
                         cancellationToken);
                     var response = CreateEnvelope(product, context);
                     CatalogApiLog.ProductCreated(logger, product.Id, correlationId);
+                    if (product.CategoryId is not null)
+                    {
+                        CatalogApiLog.ProductCategoryAssociated(
+                            logger,
+                            product.Id,
+                            product.CategoryId,
+                            correlationId);
+                    }
 
                     return Results.Created($"/products/{product.Id}", response);
                 })
@@ -38,7 +47,30 @@ internal static class ProductEndpoints
             .Accepts<CreateProductRequest>("application/json")
             .Produces<ProductResponseEnvelope>(StatusCodes.Status201Created)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
+
+        endpoints.MapGet(
+                "/products",
+                async (
+                    ProductManager manager,
+                    HttpContext context,
+                    ILogger<ProductEndpointLogCategory> logger,
+                    CancellationToken cancellationToken) =>
+                {
+                    var correlationId = CorrelationIdMiddleware.GetCorrelationId(context);
+                    CatalogApiLog.ProductListStarted(logger, correlationId);
+                    var products = await manager.ListAsync(cancellationToken);
+                    CatalogApiLog.ProductsListed(logger, products.Count, correlationId);
+                    return Results.Ok(
+                        new ProductListResponseEnvelope(
+                            products.Select(CreateResponse).ToArray(),
+                            correlationId));
+                })
+            .WithName("ListProducts")
+            .WithTags("Products")
+            .Produces<ProductListResponseEnvelope>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 
         endpoints.MapGet(
@@ -59,6 +91,38 @@ internal static class ProductEndpoints
             .WithName("GetProduct")
             .WithTags("Products")
             .Produces<ProductResponseEnvelope>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
+
+        endpoints.MapPatch(
+                "/products/{id}/status",
+                async (
+                    string id,
+                    UpdateProductStatusRequest request,
+                    ProductManager manager,
+                    HttpContext context,
+                    ILogger<ProductEndpointLogCategory> logger,
+                    CancellationToken cancellationToken) =>
+                {
+                    var correlationId = CorrelationIdMiddleware.GetCorrelationId(context);
+                    CatalogApiLog.ProductStatusChangeStarted(logger, id, correlationId);
+                    var product = await manager.SetStatusAsync(
+                        id,
+                        request.IsActive,
+                        cancellationToken);
+                    CatalogApiLog.ProductStatusChanged(
+                        logger,
+                        product.Id,
+                        product.IsActive,
+                        correlationId);
+                    return Results.Ok(CreateEnvelope(product, context));
+                })
+            .WithName("UpdateProductStatus")
+            .WithTags("Products")
+            .Accepts<UpdateProductStatusRequest>("application/json")
+            .Produces<ProductResponseEnvelope>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 
@@ -68,16 +132,19 @@ internal static class ProductEndpoints
     private static ProductResponseEnvelope CreateEnvelope(
         ManagedProduct product,
         HttpContext context) => new(
-        new ProductResponse(
-            product.Id,
-            product.Sku,
-            product.Name,
-            product.Description,
-            product.Price,
-            product.IsActive,
-            product.CreatedAt,
-            product.UpdatedAt),
+        CreateResponse(product),
         CorrelationIdMiddleware.GetCorrelationId(context));
+
+    private static ProductResponse CreateResponse(ManagedProduct product) => new(
+        product.Id,
+        product.Sku,
+        product.Name,
+        product.Description,
+        product.Price,
+        product.CategoryId,
+        product.IsActive,
+        product.CreatedAt,
+        product.UpdatedAt);
 }
 
 internal sealed class ProductEndpointLogCategory

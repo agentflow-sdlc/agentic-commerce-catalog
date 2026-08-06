@@ -1,4 +1,6 @@
+using Catalog.Engines.Categories;
 using Catalog.Engines.Products;
+using Catalog.Managers.Categories;
 using Catalog.Managers.Products;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -10,9 +12,12 @@ public static class CatalogManagerServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddSingleton<ICategoryEngine, CategoryEngine>();
+        services.AddSingleton<ICategoryIdGenerator, CategoryIdGenerator>();
         services.AddSingleton<IProductEngine, ProductEngine>();
         services.AddSingleton<IProductIdGenerator, ProductIdGenerator>();
         services.AddSingleton(TimeProvider.System);
+        services.AddScoped<CategoryManager>();
         services.AddScoped<ProductManager>();
 
         return services;

@@ -44,6 +44,7 @@ app.MapGet(
     .Produces<HealthResponse>(StatusCodes.Status200OK);
 
 app.MapProductEndpoints();
+app.MapCategoryEndpoints();
 
 app.MapFallback(
     (HttpContext context) => Results.Json(

@@ -31,6 +31,15 @@ internal sealed class ProductEntityConfiguration : IEntityTypeConfiguration<Prod
         builder.Property(product => product.Price)
             .HasPrecision(18, 2)
             .IsRequired();
+        builder.Property(product => product.CategoryId)
+            .HasMaxLength(128);
+        builder.HasIndex(product => product.CategoryId)
+            .HasDatabaseName("IX_Products_CategoryId");
+        builder.HasOne<CategoryEntity>()
+            .WithMany()
+            .HasForeignKey(product => product.CategoryId)
+            .OnDelete(DeleteBehavior.SetNull)
+            .HasConstraintName("FK_Products_Categories_CategoryId");
         builder.Property(product => product.IsActive)
             .IsRequired();
         builder.Property(product => product.CreatedAt)

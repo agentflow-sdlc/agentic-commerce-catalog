@@ -21,3 +21,14 @@ public sealed class ProductSkuAlreadyExistsException : Exception
 
     public string Sku { get; }
 }
+
+public sealed class ProductCategoryNotFoundException : Exception
+{
+    public ProductCategoryNotFoundException(string categoryId, Exception? innerException = null)
+        : base("The requested category does not exist.", innerException)
+    {
+        CategoryId = categoryId;
+    }
+
+    public string CategoryId { get; }
+}
