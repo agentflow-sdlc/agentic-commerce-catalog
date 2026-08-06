@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Azure.Identity;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using Catalog.Accessors.Sql;
 using Catalog.Api;
 using Catalog.Api.Middleware;
@@ -14,6 +16,19 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddOpenApi();
+
+var applicationInsightsConnectionString =
+    builder.Configuration["ApplicationInsights:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
+{
+    builder.Services
+        .AddOpenTelemetry()
+        .UseAzureMonitor(options =>
+        {
+            options.ConnectionString = applicationInsightsConnectionString;
+            options.Credential = new DefaultAzureCredential();
+        });
+}
 
 var catalogDbConnectionString = builder.Configuration.GetConnectionString("CatalogDb");
 if (string.IsNullOrWhiteSpace(catalogDbConnectionString))

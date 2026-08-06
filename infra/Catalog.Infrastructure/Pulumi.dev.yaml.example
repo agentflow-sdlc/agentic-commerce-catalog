@@ -1,0 +1,9 @@
+config:
+  azure-native:location: eastus2
+  catalog:deployWorkload: "false"
+  catalog:nameSuffix: "000000"
+  catalog:sqlAdminLogin: catalogsqladmin
+  catalog:sqlLocation: centralus
+  catalog:sqlDatabaseSku: Basic
+  catalog:sqlAdminPassword:
+    secure: <set-with-pulumi-config>

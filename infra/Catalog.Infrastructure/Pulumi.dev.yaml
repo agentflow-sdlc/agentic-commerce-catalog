@@ -1,0 +1,10 @@
+encryptionsalt: v1:uBVZwH4YnaM=:v1:7pKFYUnmiVk3DLLu:vUpuvbKtwmOFMdODg/3WEBtarrxC9w==
+config:
+  azure-native:location: eastus2
+  catalog:nameSuffix: "654964"
+  catalog:sqlAdminLogin: catalogsqladmin
+  catalog:sqlDatabaseSku: Basic
+  catalog:sqlAdminPassword:
+    secure: v1:n/kPY8ODlgVMHT6z:qf29fEgyplgzTsRJStwKOkBv4UIyPO01d9rDJsR1tXxa45HtHcg6/a1aAZ8fSsOWngPXCcjThK9R6GR1DN644Q==
+  catalog:deployWorkload: "false"
+  catalog:sqlLocation: centralus

@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Catalog.Contracts\Catalog.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Catalog.Engines\Catalog.Engines.csproj" />
     <ProjectReference Include="..\..\src\Catalog.Managers\Catalog.Managers.csproj" />
+    <ProjectReference Include="..\..\src\Catalog.DatabaseMigrator\Catalog.DatabaseMigrator.csproj" />
   </ItemGroup>
 
   <ItemGroup>

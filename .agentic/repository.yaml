@@ -42,6 +42,11 @@ commands:
   openApiValidation: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
   migrationValidation: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
   migrationScript: dotnet ef migrations script --idempotent --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
+  pulumiBuild: dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration Release
+  bootstrapPulumi: pwsh ./scripts/bootstrap-pulumi.ps1
+  deployDev: pwsh ./scripts/deploy-dev.ps1
+  migrateDev: pwsh ./scripts/run-migrations-dev.ps1
+  smokeTestDev: pwsh ./scripts/smoke-test-dev.ps1
 
 requirements:
   sqlIntegrationTests:
@@ -59,9 +64,14 @@ features:
     - category-create
     - category-list
     - optional-product-category-association
+    - azure-dev-infrastructure
+    - immutable-container-images
+    - container-apps-api
+    - container-apps-database-migrator
+    - application-insights
+    - azure-sql-private-endpoint
   pending:
     - external-playwright
-    - azure-deployment
     - agents
 
 qualityGates:
@@ -75,3 +85,8 @@ qualityGates:
   - openapi-validation
   - migration-validation
   - migration-script
+  - pulumi-build
+  - pulumi-preview
+  - container-builds
+  - database-migration-job
+  - deployment-smoke-tests
