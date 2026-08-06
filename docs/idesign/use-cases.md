@@ -23,6 +23,7 @@
 ## Get Product by ID
 
 1. API passes the route ID to `ProductManager`.
-2. Manager retrieves through `IProductAccessor`.
-3. An unknown ID becomes the stable `PRODUCT_NOT_FOUND` 404 response.
-4. A known Product is mapped to the public response without exposing EF types.
+2. Engine validates and canonicalizes the `PRODUCT-<guid>` ID before any persistence call.
+3. Manager retrieves through `IProductAccessor` only after successful validation.
+4. An invalid ID becomes the public `PRODUCT_VALIDATION_FAILED` response with empty details while the internal `PRODUCT_ID_INVALID` reason is logged; an unknown canonical ID becomes `PRODUCT_NOT_FOUND`.
+5. A known Product is mapped to the public response without exposing EF types.

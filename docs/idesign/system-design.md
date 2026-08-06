@@ -4,7 +4,7 @@
 
 - **Client — `Catalog.Api`:** ASP.NET Core entry point, dependency composition, HTTP translation, middleware, runtime OpenAPI, and health. It contains no Product business rules or EF queries.
 - **Managers — `Catalog.Managers`:** coordinates Create Product and Get Product by ID. It invokes the Engine, obtains IDs and time from abstractions, and uses the domain accessor port.
-- **Engines — `Catalog.Engines`:** owns the deterministic Product model, normalization, validation, defaults, and the provider-neutral `IProductAccessor` port. It has no HTTP, EF Core, SQL, Azure, or provider dependency.
+- **Engines — `Catalog.Engines`:** owns the deterministic Product model, normalization, stable ID validation, defaults, and the provider-neutral `IProductAccessor` port. It has no HTTP, EF Core, SQL, Azure, or provider dependency.
 - **Accessors — `Catalog.Accessors`:** owns concrete access to information containers. The current SQL accessor maps between the domain Product and an EF persistence entity; later file, API, object-store, or other container access belongs to the same layer.
 - **Contracts — `Catalog.Contracts`:** owns provider-neutral HTTP request and response shapes.
 
@@ -14,7 +14,7 @@
 POST /products or GET /products/{id}
   -> Catalog.Api maps HTTP contracts
   -> ProductManager coordinates the use case
-  -> ProductEngine applies deterministic rules
+  -> ProductEngine applies deterministic rules or validates the stable ID
   -> IProductAccessor expresses the domain-required access
   -> SqlProductAccessor maps and calls CatalogDbContext
   -> SQL Server or Azure SQL
@@ -43,13 +43,21 @@ The Engine receives both the Product ID and timestamp. It never calls `Guid.NewG
 
 The Manager performs a normalized-SKU existence check for a clear conflict result. The database unique index remains authoritative for concurrent requests, and the SQL accessor translates SQL Server unique-key errors into the same provider-neutral conflict.
 
+For reads, the Engine validates and canonicalizes `PRODUCT-<guid>` before the Manager calls `IProductAccessor`. This avoids unnecessary database access for malformed identifiers.
+
+## Error and logging decision
+
+Controlled exceptions cross only one boundary: Engines report deterministic rule failures to Managers, Managers convert those failures into use-case outcomes, and the API middleware maps them to stable HTTP errors. Exceptions are not used for successful or branching workflow results. Functional validation, SKU conflict, not found, malformed HTTP input, and unexpected failures remain distinct.
+
+The correlation middleware scopes every request log. Product logs record use-case start, creation/retrieval, validation reason, normalized SKU conflict, and not-found ID. Request bodies, SQL, connection strings, EF internals, and stack traces are never written to client responses or functional logs.
+
 ## Implemented now
 
 - `GET /health`.
 - `POST /products`.
 - `GET /products/{id}`.
-- Stable correlation IDs and error contracts.
+- Stable correlation IDs and error contracts with required `details`.
 - EF Core SQL Server/Azure SQL mapping and initial migration.
 - Unit, in-memory HTTP, architecture, OpenAPI, and ephemeral SQL Server tests.
 
-Category, Product listing, status changes, search, inventory, authentication, deployment, infrastructure, and agents remain outside this slice.
+Category, Product listing, status changes, search, inventory, authentication, deployment, infrastructure, external Playwright, and agents remain outside this slice.

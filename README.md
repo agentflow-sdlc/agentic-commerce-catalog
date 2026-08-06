@@ -14,9 +14,9 @@ POST /products
 GET /products/{id}
 ```
 
-Product creation normalizes SKU and text, rejects invalid or duplicate SKUs, accepts non-negative `decimal(18,2)` prices including zero, generates a stable application ID, starts products as active, and assigns deterministic timestamps through `TimeProvider`. Product retrieval returns a stable not-found error for unknown IDs.
+Product creation normalizes SKU and text, rejects invalid or duplicate SKUs, accepts non-negative `decimal(18,2)` prices including zero, generates a stable `PRODUCT-<guid>` application ID, starts products as active, and assigns deterministic timestamps through `TimeProvider`. Product retrieval validates that stable ID format before persistence and returns a stable not-found error for unknown canonical IDs.
 
-Product listing, status changes, Category, search, filtering, inventory, orders, authentication, deployment, Azure infrastructure, agents, and orchestration are outside this slice.
+Product listing, status changes, Category, search, filtering, inventory, orders, authentication, deployment, Azure infrastructure, external Playwright, agents, and orchestration are outside this slice.
 
 ## Architecture
 
@@ -81,6 +81,8 @@ dotnet run --project src/Catalog.Api/Catalog.Api.csproj
 
 Use the URL printed by ASP.NET Core. Every response receives an `X-Correlation-ID`; a valid caller-provided value is propagated. Expected Product failures are translated to stable 400, 404, or 409 responses, and unexpected exceptions return a safe 500 response without implementation details.
 
+Successful Product responses preserve the previous `{ data, correlationId }` envelope. Errors use `{ error: { code, message, details }, correlationId }`. Functional validation returns `PRODUCT_VALIDATION_FAILED` with empty public `details`; its internal reason code is recorded only in safe logs. Malformed JSON returns `REQUEST_VALIDATION_FAILED`. Logs record use-case start, successful creation/retrieval, validation, SKU conflicts, not-found results, and unexpected failures without recording request bodies, SQL, connection strings, or stack traces.
+
 Runtime OpenAPI is available at `/openapi/v1.json` in Development.
 
 ## Migrations
@@ -99,14 +101,24 @@ Create a future migration with:
 ```bash
 dotnet ef migrations add <MigrationName> \
   --project src/Catalog.Accessors/Catalog.Accessors.csproj \
+  --startup-project src/Catalog.Api/Catalog.Api.csproj \
   --output-dir Migrations
+```
+
+Apply committed migrations to the configured `CatalogDb` database with:
+
+```bash
+dotnet ef database update \
+  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
+  --startup-project src/Catalog.Api/Catalog.Api.csproj
 ```
 
 Verify that the model and committed migration agree:
 
 ```bash
 dotnet ef migrations has-pending-model-changes \
-  --project src/Catalog.Accessors/Catalog.Accessors.csproj
+  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
+  --startup-project src/Catalog.Api/Catalog.Api.csproj
 ```
 
 ## Validate the repository
@@ -119,6 +131,7 @@ dotnet test Catalog.sln --configuration Release --no-build
 dotnet format Catalog.sln --verify-no-changes --no-restore
 dotnet ef migrations has-pending-model-changes \
   --project src/Catalog.Accessors/Catalog.Accessors.csproj \
+  --startup-project src/Catalog.Api/Catalog.Api.csproj \
   --configuration Release \
   --no-build
 ```
@@ -131,7 +144,7 @@ RUN_SQL_SERVER_TESTS=true dotnet test \
   --configuration Release
 ```
 
-The SQL suite starts an ephemeral SQL Server container, applies the committed EF migration, exercises POST and GET through the complete HTTP stack, validates duplicate-SKU behavior at both use-case and database levels, and removes the container after the suite.
+The SQL suite starts an ephemeral SQL Server container, applies the committed EF migration, verifies health, exercises POST and GET through the complete HTTP stack, checks invalid fields and IDs, validates camelCase and correlation behavior, verifies duplicate-SKU behavior at both use-case and database levels, proves persistence between requests, and removes the container after the suite.
 
 ## Public OpenAPI contract
 
@@ -140,6 +153,8 @@ The SQL suite starts an ephemeral SQL Server container, applies the committed EF
 ## Azure Pipelines
 
 `azure-pipelines.yml` validates pull requests and `main`. It restores tools and packages, builds Release, runs all tests with the Docker-backed SQL suite enabled, publishes TRX evidence, verifies formatting, validates OpenAPI, and verifies that EF Core has no pending model changes. It contains no deployment or infrastructure configuration.
+
+Product list and status, Category, Azure deployment, external Playwright, and all agent runtimes remain pending.
 
 ## Repository structure
 

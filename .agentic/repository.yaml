@@ -36,9 +36,16 @@ commands:
   build: dotnet build Catalog.sln --configuration Release --no-restore
   test: dotnet test Catalog.sln --configuration Release --no-build
   sqlIntegrationTest: RUN_SQL_SERVER_TESTS=true dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj --configuration Release
+  migrationAdd: dotnet ef migrations add <Name> --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --output-dir Migrations
+  databaseUpdate: dotnet ef database update --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj
   formatCheck: dotnet format Catalog.sln --verify-no-changes --no-restore
   openApiValidation: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
-  migrationValidation: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --configuration Release --no-build
+  migrationValidation: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
+
+requirements:
+  sqlIntegrationTests:
+    docker: required
+    sharedAzureDatabase: prohibited
 
 qualityGates:
   - restore

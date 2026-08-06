@@ -11,6 +11,8 @@ gates:
     command: dotnet test tests/Catalog.Product.Tests/Catalog.Product.Tests.csproj --configuration Release --no-build
   sql-integration-tests:
     command: RUN_SQL_SERVER_TESTS=true dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj --configuration Release --no-build
+    requiresDocker: true
+    database: ephemeral-sql-server
   architecture-tests:
     command: dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj --configuration Release --no-build
   formatting:
@@ -18,4 +20,4 @@ gates:
   openapi-validation:
     command: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
   migration-validation:
-    command: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --configuration Release --no-build
+    command: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build

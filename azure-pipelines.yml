@@ -39,14 +39,62 @@ steps:
     displayName: Build solution
 
   - script: >-
-      dotnet test Catalog.sln
+      dotnet test tests/Catalog.Product.Tests/Catalog.Product.Tests.csproj
       --configuration $(buildConfiguration)
       --no-build
-      --logger "trx;LogFilePrefix=Catalog"
+      --logger "trx;LogFileName=Catalog.Product.Tests.trx"
       --results-directory "$(testResultsDirectory)"
-    displayName: Run tests
+    displayName: Run Product unit tests
+
+  - script: >-
+      dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+      --filter Category!=OpenApi
+      --logger "trx;LogFileName=Catalog.Api.Tests.trx"
+      --results-directory "$(testResultsDirectory)"
+    displayName: Run API tests
+
+  - script: >-
+      dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+      --logger "trx;LogFileName=Catalog.Architecture.Tests.trx"
+      --results-directory "$(testResultsDirectory)"
+    displayName: Run architecture tests
+
+  - script: docker version
+    displayName: Verify Docker for SQL Server integration tests
+
+  - script: >-
+      dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+      --logger "trx;LogFileName=Catalog.Product.IntegrationTests.trx"
+      --results-directory "$(testResultsDirectory)"
+    displayName: Run SQL Server integration tests
     env:
       RUN_SQL_SERVER_TESTS: "true"
+
+  - script: >-
+      dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+      --filter Category=OpenApi
+      --logger "trx;LogFileName=Catalog.OpenApi.Tests.trx"
+      --results-directory "$(testResultsDirectory)"
+    displayName: Validate OpenAPI contract
+
+  - script: dotnet format Catalog.sln --verify-no-changes --no-restore
+    displayName: Verify formatting
+
+  - script: >-
+      dotnet ef migrations has-pending-model-changes
+      --project src/Catalog.Accessors/Catalog.Accessors.csproj
+      --startup-project src/Catalog.Api/Catalog.Api.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+    displayName: Validate EF Core migration
 
   - task: PublishTestResults@2
     displayName: Publish test results
@@ -57,26 +105,6 @@ steps:
       failTaskOnFailedTests: true
       failTaskOnMissingResultsFile: false
       testRunTitle: Catalog .NET validation
-
-  - script: dotnet format Catalog.sln --verify-no-changes --no-restore
-    displayName: Verify formatting
-    condition: succeededOrFailed()
-
-  - script: >-
-      dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-      --filter Category=OpenApi
-    displayName: Validate OpenAPI contract
-    condition: succeededOrFailed()
-
-  - script: >-
-      dotnet ef migrations has-pending-model-changes
-      --project src/Catalog.Accessors/Catalog.Accessors.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-    displayName: Validate EF Core migration
-    condition: succeededOrFailed()
 
   - task: PublishPipelineArtifact@1
     displayName: Publish failure diagnostics
