@@ -2,18 +2,22 @@
 
 | Volatility | Stable boundary | Implemented decision |
 | --- | --- | --- |
-| HTTP contracts | `Catalog.Contracts` plus `openapi/catalog-api.yaml` | One Product representation, one Category representation, collection envelopes, status request, correlation, and stable errors. |
-| Product creation rules | `ProductEngine` | SKU/text normalization, decimal price validation, optional Category ID, active default, controlled ID/time. |
-| Product state rules | `ProductEngine` | One status transition operation; baseline-compatible timestamp update even when the requested state repeats. |
+| HTTP contracts | `Catalog.Contracts` plus `openapi/catalog-api.yaml` | Stable Product, Category, collection, status, health, correlation, and error shapes. |
+| Product rules | `ProductEngine` | SKU/text normalization, price validation, optional Category ID, active default, controlled ID/time. |
 | Category rules | `CategoryEngine` | Required name, collapsed whitespace, lowercase comparison name, optional description, controlled ID/time. |
-| Product–Category association | `ProductManager` plus domain ports | Manager verifies existence; Product Engine remains deterministic; SQL foreign key protects races. |
-| Collection queries | Domain ports implemented by `Catalog.Accessors` | Products use `createdAt DESC, id DESC`; Categories use normalized name and ID ascending; no pagination or N+1 queries. |
-| Persistence | `Catalog.Accessors` | EF entities and mappings remain outside business components. |
-| SQL engine | Accessor provider registration | SQL Server chosen and Azure SQL compatible; real constraints are verified with an ephemeral SQL Server. |
-| Uniqueness | Manager coordination plus SQL indexes | Pre-checks provide clear outcomes; unique SKU and normalized Category name indexes remain authoritative. |
-| Referential integrity | SQL foreign key translated by Accessors | Nullable Product Category reference uses `ON DELETE SET NULL`; unknown references become `CATEGORY_NOT_FOUND`. |
-| Time and IDs | `TimeProvider`, Product/Category ID generators | Engines receive values and never call the system clock or GUID generator. |
-| Errors | Manager exceptions translated in API middleware | Validation, conflicts, Product not found, Category not found, and unexpected errors remain distinct and safe. |
-| Deployment | Future pipeline/infrastructure boundary | Validation CI only; Azure deployment remains pending. |
+| Product-Category association | `ProductManager` plus domain ports | Manager verifies existence; the SQL foreign key remains authoritative during races. |
+| Collection queries | Domain ports implemented by `Catalog.Accessors` | Deterministic ordering and one query per collection; no N+1 access. |
+| Information containers | `Catalog.Accessors` | SQL is current; future file, API, object-store, or other container access stays in this layer. |
+| SQL engine | Accessor provider registration | SQL Server is Azure SQL compatible and verified by isolated container tests when Docker is available. |
+| Uniqueness and integrity | Manager coordination plus SQL constraints | Pre-checks provide clear errors; unique indexes and the foreign key protect concurrency. |
+| Time and IDs | `TimeProvider` and ID generators | Engines never call the system clock or GUID generator. |
+| Errors | Manager exceptions translated in API middleware | Functional failures and unexpected failures remain distinct, correlated, and safe. |
+| Container runtime | Dockerfiles and Container Apps templates | .NET 10 multi-stage, Release-only, port 8080, non-root runtime images. |
+| Database lifecycle | `Catalog.DatabaseMigrator` and Container Apps Job | Migrations are explicit and isolated from the API runtime. |
+| Cloud resources | `Catalog.Infrastructure` | Pulumi Azure Native components own dev infrastructure without becoming a production dependency. |
+| Secret delivery | Pulumi encrypted config, Key Vault, managed identity | SQL credentials stay encrypted; workloads consume a Key Vault reference. |
+| SQL network | VNet, Private Endpoint, private DNS | Public SQL access is disabled; the Container Apps environment owns the application path. |
+| Telemetry | Optional Azure Monitor OpenTelemetry registration | Local execution works without Application Insights; Azure uses managed-identity ingestion. |
+| Deployment orchestration | PowerShell scripts and future Azure Pipeline | Current deployment uses Azure CLI; the pipeline remains gated until Azure DevOps resources are configured. |
 
-`Catalog.Accessors` is the general information-container access layer. SQL is the current implementation; future file, API, or object-store access belongs behind domain-owned ports in the same layer.
+The volatile infrastructure implementation never changes the provider-neutral domain or public contracts. Production assemblies cannot reference Pulumi or the infrastructure project.

@@ -1,7 +1,6 @@
 # Agentic Commerce Catalog
 
-
-`agentic-commerce-catalog` is the Catalog service for the Agentic SDLC MVP. Its basic Product and Category behavior now has functional parity in .NET 10, ASP.NET Core, EF Core, and SQL Server-compatible persistence.
+`agentic-commerce-catalog` is the Catalog service for the Agentic SDLC MVP. Product and Category behavior runs on .NET 10, ASP.NET Core, EF Core, and Azure SQL. Pulumi C# provisions an isolated Azure dev environment, while Azure Container Apps hosts the API and the one-shot database migrator.
 
 Azure DevOps administers Boards, Pipelines, states, and evidence. GitHub stores the repository, branches, commits, and pull requests.
 
@@ -23,9 +22,9 @@ Successful Catalog responses use the historical `{ data, correlationId }` envelo
 
 Product creation normalizes SKU and text, accepts non-negative `decimal(18,2)` prices, creates an active `PRODUCT-<guid>`, and optionally stores one `categoryId`. The Manager rejects unknown categories; the database foreign key remains authoritative during write races. Products are listed by `createdAt DESC, id DESC` without pagination or per-row queries.
 
-Product status changes use only `{ "isActive": true|false }`. The operation preserves SKU, name, price, description, and category. Matching the historical baseline, every valid status request writes the requested state and a new `updatedAt`, including a repeated state.
+Product status changes use only `{ "isActive": true|false }`. Every valid status request writes the requested state and a new `updatedAt`, including a repeated state.
 
-Category creation generates `CATEGORY-<guid>`, trims and collapses repeated whitespace for the display name, and compares the lowercase normalized name for uniqueness. The historical optional description and both timestamps are preserved. The internal normalized name is not exposed by the public response. Categories are listed by normalized name and ID.
+Category creation generates `CATEGORY-<guid>`, normalizes its display and comparison names, and preserves the optional description and timestamps. Categories are listed by normalized name and ID.
 
 ## IDesign structure
 
@@ -37,11 +36,13 @@ HTTP -> Catalog.Api -> Catalog.Managers -> Catalog.Engines
 
 | Project | Responsibility |
 | --- | --- |
-| `Catalog.Contracts` | Provider-neutral Product, Category, collection, status, health, and error contracts. |
-| `Catalog.Api` | HTTP translation, correlation, safe logging, middleware, composition, and OpenAPI. |
+| `Catalog.Contracts` | Provider-neutral Product, Category, health, collection, status, and error contracts. |
+| `Catalog.Api` | HTTP translation, correlation, safe logging, middleware, composition, OpenAPI, and optional telemetry. |
 | `Catalog.Managers` | Product and Category use-case coordination. |
-| `Catalog.Engines` | Deterministic Product/Category rules, domain models, and accessor ports. |
+| `Catalog.Engines` | Deterministic rules, domain models, and accessor ports. |
 | `Catalog.Accessors` | Technical access to information containers; this implementation uses EF Core and SQL Server. |
+| `Catalog.DatabaseMigrator` | One-shot EF Core migration executable with no HTTP surface. |
+| `Catalog.Infrastructure` | Pulumi Azure Native components; no production project references it. |
 
 The API references Accessors only in the composition root. Managers use domain-owned ports and never reference EF Core, SQL, or Accessor implementations. Future file, API, object-store, or other information-container access also belongs in `Catalog.Accessors`.
 
@@ -53,10 +54,12 @@ See [system design](docs/idesign/system-design.md), [project design](docs/idesig
 - Access to NuGet.org during restore.
 - SQL Server or an Azure SQL-compatible connection for the application.
 - Docker for the isolated SQL Server integration suite.
+- PowerShell 7, Azure CLI, and Pulumi CLI for Azure deployment.
+- An active Azure CLI subscription with permission to create the documented dev resources.
 
 Restore the repository-local EF Core tool with `dotnet tool restore`.
 
-## Database configuration
+## Local database configuration
 
 The connection string is named `CatalogDb`. No credential is committed.
 
@@ -80,30 +83,17 @@ dotnet restore Catalog.sln
 dotnet run --project src/Catalog.Api/Catalog.Api.csproj
 ```
 
-Development OpenAPI is available at `/openapi/v1.json`. The technology-neutral source contract is [`openapi/catalog-api.yaml`](openapi/catalog-api.yaml).
+Development OpenAPI is available at `/openapi/v1.json`. The provider-neutral source contract is [`openapi/catalog-api.yaml`](openapi/catalog-api.yaml).
 
 ## Errors, correlation, and logging
 
-Errors use `{ error: { code, message, details }, correlationId }`. Supported functional codes include:
+Errors use `{ error: { code, message, details }, correlationId }`. Expected errors return safe details and the correlation ID. Structured logs contain request metadata, stable IDs, counts, and state; they exclude request bodies, SQL values, passwords, connection strings, tokens, provider exception details, and functional stack traces.
 
-- `PRODUCT_VALIDATION_FAILED`
-- `PRODUCT_SKU_ALREADY_EXISTS`
-- `PRODUCT_NOT_FOUND`
-- `CATEGORY_VALIDATION_FAILED`
-- `CATEGORY_NAME_ALREADY_EXISTS`
-- `CATEGORY_NOT_FOUND`
-- `UNEXPECTED_ERROR`
-
-Expected errors return safe details and the correlation ID. Logs cover use-case starts, lists, Product status, Product–Category association, duplicate names/SKUs, not-found results, and unexpected failures. Request bodies, SQL, connection strings, stack traces, and provider exception messages are not returned or functionally logged.
+Application Insights registration is optional. Local execution remains functional when `ApplicationInsights:ConnectionString` is absent. Azure uses the workload managed identity to authenticate telemetry ingestion.
 
 ## EF Core migrations
 
-`src/Catalog.Accessors/Migrations` contains:
-
-- `InitialProduct`, which creates Products and the unique SKU constraint.
-- `AddCategoriesAndProductCategory`, which creates Categories, the unique normalized-name index, nullable Product `CategoryId`, its index, and an `ON DELETE SET NULL` foreign key without recreating Products.
-
-Create a migration:
+`src/Catalog.Accessors/Migrations` contains the incremental Product and Category schema history. Create a migration with:
 
 ```bash
 dotnet ef migrations add <MigrationName> \
@@ -112,13 +102,7 @@ dotnet ef migrations add <MigrationName> \
   --output-dir Migrations
 ```
 
-Apply all migrations:
-
-```bash
-dotnet ef database update \
-  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
-  --startup-project src/Catalog.Api/Catalog.Api.csproj
-```
+Production does not run migrations in the API process. Azure executes `Catalog.DatabaseMigrator` through a manually triggered Container Apps Job before smoke tests.
 
 ## Validation
 
@@ -133,9 +117,10 @@ dotnet ef migrations has-pending-model-changes \
   --startup-project src/Catalog.Api/Catalog.Api.csproj \
   --configuration Release \
   --no-build
+dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration Release
 ```
 
-The default test command reports container tests as skipped. Run the real isolated SQL Server suite on a Docker host:
+The default test command reports container tests as skipped. Run the isolated SQL Server suite on a Docker host:
 
 ```bash
 RUN_SQL_SERVER_TESTS=true dotnet test \
@@ -143,15 +128,37 @@ RUN_SQL_SERVER_TESTS=true dotnet test \
   --configuration Release
 ```
 
-The fixture starts an ephemeral SQL Server, applies `InitialProduct` first and then the full migration chain, resets Product and Category data between cases, verifies real unique indexes and the foreign key, and removes the container afterward. It never uses EF Core InMemory or a shared Azure database.
+## Azure dev deployment
+
+The deployment reuses the private Azure Blob Pulumi backend in `rg-agentic-pulumi-state`, its `pulumi-state` container, stack `dev`, and the passphrase secrets provider. It does not create or migrate the backend. `Pulumi.dev.yaml` may be committed only with an `encryptionsalt` and a `secure:` value for `catalog:sqlAdminPassword`.
+
+From an authenticated Azure CLI session, with the Pulumi passphrase and SQL admin password supplied by a secure process environment:
+
+```powershell
+pwsh ./scripts/deploy-dev.ps1
+```
+
+The script validates the repository, provisions the foundation, builds immutable commit-based API and migrator images through ACR Tasks, deploys the workloads, runs the migration job, and verifies `/health`, `/products`, and `/categories`. Smoke evidence is written to `artifacts/deployment/dev/<commit-sha>/` and ignored by Git.
+
+```text
+GitHub -> Pulumi C# -> ACR -> Azure Container Apps -> Catalog API -> Azure SQL
+                                |                       |
+                                +-> migration job       +-> Application Insights
+```
+
+Azure SQL has public access disabled. Container Apps reaches it through a delegated VNet subnet, SQL Private Endpoint, and private DNS. A user-assigned managed identity provides ACR pulls, Key Vault secret references, and Azure Monitor ingestion.
+
+SQL authentication is a temporary MVP exception. The password exists only in encrypted Pulumi configuration and in the Key Vault connection-string secret. It never enters images, source files, logs, PR text, outputs, or smoke evidence.
+
+See [`infra/Catalog.Infrastructure/README.md`](infra/Catalog.Infrastructure/README.md) for rollback, security, cost, backend, and Azure DevOps setup details.
 
 ## Azure Pipeline
 
-`azure-pipelines.yml` restores tools/packages, builds Release, runs unit/API/architecture/OpenAPI tests, requires Docker for the clean-database SQL suite, validates EF migrations and formatting, publishes TRX evidence, and retains diagnostics on failure. It contains no deployment, service connection, infrastructure, or remote Azure SQL configuration.
+`azure-pipelines.yml` defines the future gated sequence: Validate, Provision Foundation, Build Images, Deploy Workload, Run Migrations, Smoke Tests, and Publish Evidence. Pull requests execute validation only. Azure deployment remains disabled by default until the documented service connection and secret pipeline variables are configured.
 
 ## Current limitations
 
-Basic Product and Category parity is implemented. Product/Category deletion or general editing, search, pagination, inventory, orders, authentication, authorization, distributed events, caching, Azure deployment, infrastructure, external Microsoft.Playwright verification, and agents remain out of scope.
+Product and Category parity plus the Azure dev deployment are implemented. Product/Category deletion or general editing, search, pagination, inventory, orders, authentication, authorization, distributed events, caching, production infrastructure, external Microsoft.Playwright verification, and agents remain out of scope.
 
 ## Repository structure
 
@@ -164,14 +171,14 @@ src/Catalog.Managers/                       Product and Category coordination
 src/Catalog.Engines/                        Product/Category rules, models, and ports
 src/Catalog.Accessors/Sql/                   EF Core SQL Server Accessors
 src/Catalog.Accessors/Migrations/            Incremental EF Core migrations
-tests/Catalog.Api.Tests/                     In-memory HTTP and OpenAPI tests
-tests/Catalog.Product.Tests/                 Product and Category unit tests
-tests/Catalog.Product.IntegrationTests/      Isolated SQL Server end-to-end tests
-tests/Catalog.Architecture.Tests/            Executable dependency rules
-openapi/                                    Technology-neutral HTTP contract
-docs/idesign/                               Implemented IDesign evidence
-docs/migration/                             Historical migration evidence
-azure-pipelines.yml                         Pull-request and main validation
+src/Catalog.DatabaseMigrator/                Non-HTTP migration executable and image
+infra/Catalog.Infrastructure/                Pulumi Azure Native dev infrastructure
+scripts/                                     Idempotent deployment and verification scripts
+tests/                                       Unit, API, SQL integration, and architecture tests
+openapi/                                     Provider-neutral HTTP contract
+docs/idesign/                                Implemented IDesign evidence
+docs/migration/                              Historical migration evidence
+azure-pipelines.yml                          Validation and gated Azure deployment pipeline
 ```
 
 ## Previous baseline

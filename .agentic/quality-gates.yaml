@@ -25,3 +25,25 @@ gates:
     command: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
   migration-script:
     command: dotnet ef migrations script --idempotent --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
+  pulumi-build:
+    command: dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration Release
+  pulumi-preview:
+    command: pulumi preview --non-interactive --diff
+    requiresAzureCli: true
+    requiresSecrets:
+      - PULUMI_CONFIG_PASSPHRASE
+  container-builds:
+    command: pwsh ./scripts/deploy-dev.ps1
+    provider: azure-container-registry-tasks
+    localDockerRequired: false
+  database-migration-job:
+    command: pwsh ./scripts/run-migrations-dev.ps1
+    blocksSmokeTestsOnFailure: true
+  deployment-smoke-tests:
+    command: pwsh ./scripts/smoke-test-dev.ps1
+    methods:
+      - GET
+    endpoints:
+      - /health
+      - /products
+      - /categories

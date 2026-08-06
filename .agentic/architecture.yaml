@@ -50,6 +50,23 @@ components:
     allowedDependencies:
       - engines-and-domain-ports
       - required-provider-libraries
+  database-migrator:
+    project: src/Catalog.DatabaseMigrator/Catalog.DatabaseMigrator.csproj
+    responsibilities:
+      - one-shot-ef-core-migrations
+      - non-http-process
+    allowedDependencies:
+      - accessors
+      - generic-host
+  infrastructure:
+    project: infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
+    responsibilities:
+      - pulumi-azure-native
+      - dev-cloud-resources
+      - workload-composition
+    allowedDependencies:
+      - pulumi
+      - azure-native
 
 forbiddenDependencies:
   - from: contracts
@@ -81,6 +98,19 @@ forbiddenDependencies:
       - direct-accessor-invocation
       - entity-framework-core
       - sql-client
+      - pulumi
+      - infrastructure
+      - database-migrator
+  - from: database-migrator
+    to:
+      - aspnet-core
+      - http-endpoints
+      - infrastructure
+      - pulumi
+  - from: production-projects
+    to:
+      - infrastructure
+      - pulumi
 
 endpoints:
   implemented:
@@ -116,6 +146,22 @@ persistence:
   integrationTests:
     strategy: ephemeral-sql-server-testcontainer
     dockerRequired: true
+
+deployment:
+  environment: dev
+  runtime: azure-container-apps
+  infrastructure: pulumi-csharp-azure-native
+  backend: azure-blob-existing
+  stack: dev
+  secretsProvider: passphrase
+  registry: azure-container-registry-basic
+  database: azure-sql-basic-private-endpoint
+  secretDelivery: key-vault-managed-identity
+  migrations: container-apps-manual-job
+  smokeTests:
+    - GET /health
+    - GET /products
+    - GET /categories
 
 runtimeAbstractions:
   time: System.TimeProvider
