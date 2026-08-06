@@ -191,7 +191,7 @@ internal sealed class CatalogFoundation : ComponentResource
             {
                 ResourceGroupName = ResourceGroup.Name,
                 ServerName = args.Names.SqlServer,
-                Location = ResourceGroup.Location,
+                Location = args.SqlLocation,
                 AdministratorLogin = args.SqlAdminLogin,
                 AdministratorLoginPassword = args.SqlAdminPassword,
                 MinimalTlsVersion = "1.2",
@@ -209,7 +209,7 @@ internal sealed class CatalogFoundation : ComponentResource
                 ResourceGroupName = ResourceGroup.Name,
                 ServerName = SqlServer.Name,
                 DatabaseName = args.Names.SqlDatabase,
-                Location = ResourceGroup.Location,
+                Location = args.SqlLocation,
                 MaxSizeBytes = 2_147_483_648,
                 RequestedBackupStorageRedundancy = "Local",
                 Sku = new SqlInputs.SkuArgs
@@ -413,6 +413,7 @@ internal sealed class CatalogFoundation : ComponentResource
 
 internal sealed record CatalogFoundationArgs(
     string Location,
+    string SqlLocation,
     string TenantId,
     CatalogNames Names,
     string SqlAdminLogin,

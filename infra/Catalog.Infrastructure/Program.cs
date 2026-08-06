@@ -9,6 +9,7 @@ return await Deployment.RunAsync(async () =>
     var client = await GetClientConfig.InvokeAsync();
 
     var location = azureConfig.Get("location") ?? "eastus2";
+    var sqlLocation = catalogConfig.Get("sqlLocation") ?? location;
     var suffix = catalogConfig.Require("nameSuffix");
     var deployWorkload = catalogConfig.GetBoolean("deployWorkload") ?? false;
     var sqlAdminLogin = catalogConfig.Get("sqlAdminLogin") ?? "catalogsqladmin";
@@ -27,6 +28,7 @@ return await Deployment.RunAsync(async () =>
         "catalog-foundation",
         new CatalogFoundationArgs(
             location,
+            sqlLocation,
             client.TenantId,
             names,
             sqlAdminLogin,
@@ -51,6 +53,7 @@ return await Deployment.RunAsync(async () =>
     return new Dictionary<string, object?>
     {
         ["location"] = location,
+        ["sqlLocation"] = sqlLocation,
         ["resourceGroupName"] = foundation.ResourceGroup.Name,
         ["containerRegistryName"] = foundation.ContainerRegistry.Name,
         ["containerRegistryLoginServer"] = foundation.ContainerRegistryLoginServer,

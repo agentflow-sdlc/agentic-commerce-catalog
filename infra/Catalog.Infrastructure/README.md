@@ -30,6 +30,8 @@ The backend is bootstrap infrastructure external to the Catalog stack:
 - Azure Container Apps environment connected to the VNet and Log Analytics.
 - Encrypted SQL connection string stored as the `catalog-db` Key Vault secret.
 
+`catalog:sqlLocation` can place Azure SQL in a different enabled Azure region while the Private Endpoint remains in the application VNet. This is used when a subscription has SQL provisioning restrictions in the primary region; all non-SQL resources remain in the backend-discovered primary region.
+
 `CatalogWorkload` is created only when `catalog:deployWorkload=true` and adds:
 
 - Catalog API Container App with HTTPS ingress, port 8080, health probes, and scale-to-zero.

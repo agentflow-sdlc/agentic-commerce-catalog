@@ -3,6 +3,7 @@ config:
   catalog:deployWorkload: "false"
   catalog:nameSuffix: "000000"
   catalog:sqlAdminLogin: catalogsqladmin
+  catalog:sqlLocation: eastus
   catalog:sqlDatabaseSku: Basic
   catalog:sqlAdminPassword:
     secure: <set-with-pulumi-config>

@@ -156,6 +156,7 @@ deployment:
   secretsProvider: passphrase
   registry: azure-container-registry-basic
   database: azure-sql-basic-private-endpoint
+  sqlRegion: configurable-subscription-enabled-region
   secretDelivery: key-vault-managed-identity
   migrations: container-apps-manual-job
   smokeTests:
