@@ -36,6 +36,7 @@ function Set-PulumiSecretFromStandardInput {
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $PulumiPath
+    $startInfo.WorkingDirectory = (Get-Location).Path
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
