@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Reflection.Emit;
 
 namespace Catalog.Architecture.Tests;
 
@@ -102,6 +103,35 @@ public sealed class DependencyRulesTests
         Assert.DoesNotContain("Catalog.Api", references);
         Assert.DoesNotContain("Catalog.Managers", references);
         Assert.DoesNotContain("Catalog.Contracts", references);
+        Assert.DoesNotContain(
+            references,
+            reference => reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ProductEndpointsDelegateWithoutCallingEnginesAccessorsOrEfCore()
+    {
+        var endpointType = ApiAssembly.GetType("Catalog.Api.ProductEndpoints", throwOnError: true)!;
+        var endpointTypes = GetTypeAndNestedTypes(endpointType).ToArray();
+        var forbiddenAssemblies = new[]
+        {
+            "Catalog.Engines",
+            "Catalog.Accessors",
+            "Microsoft.EntityFrameworkCore",
+            "Microsoft.Data.SqlClient",
+        };
+
+        var violations = endpointTypes
+            .SelectMany(GetReferencedMembers)
+            .Where(member => forbiddenAssemblies.Contains(
+                member.Module.Assembly.GetName().Name,
+                StringComparer.Ordinal))
+            .Select(member => $"{member.Module.Assembly.GetName().Name}:{member.DeclaringType?.FullName}.{member.Name}")
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(violations);
     }
 
     [Fact]
@@ -120,4 +150,97 @@ public sealed class DependencyRulesTests
         .Select(reference => reference.Name ?? string.Empty)
         .Order(StringComparer.Ordinal)
         .ToArray();
+
+    private static IEnumerable<Type> GetTypeAndNestedTypes(Type type)
+    {
+        yield return type;
+        foreach (var nestedType in type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            foreach (var descendant in GetTypeAndNestedTypes(nestedType))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private static IEnumerable<MemberInfo> GetReferencedMembers(Type type)
+    {
+        var methods = type
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Cast<MethodBase>()
+            .Concat(type.GetConstructors(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance));
+
+        foreach (var method in methods)
+        {
+            var body = method.GetMethodBody();
+            var il = body?.GetILAsByteArray();
+            if (il is null)
+            {
+                continue;
+            }
+
+            var position = 0;
+            while (position < il.Length)
+            {
+                var value = il[position++];
+                var opcodeValue = value == 0xfe
+                    ? (ushort)(0xfe00 | il[position++])
+                    : value;
+                var opcode = OpCodesByValue[opcodeValue];
+
+                if (opcode.OperandType is OperandType.InlineField
+                    or OperandType.InlineMethod
+                    or OperandType.InlineTok
+                    or OperandType.InlineType)
+                {
+                    var token = BitConverter.ToInt32(il, position);
+                    position += sizeof(int);
+
+                    MemberInfo? member = null;
+                    try
+                    {
+                        member = method.Module.ResolveMember(
+                            token,
+                            method.DeclaringType?.GetGenericArguments(),
+                            method is MethodInfo methodInfo ? methodInfo.GetGenericArguments() : null);
+                    }
+                    catch (ArgumentException)
+                    {
+                        // An unresolved generic token cannot introduce a direct project reference.
+                    }
+
+                    if (member is not null)
+                    {
+                        yield return member;
+                    }
+
+                    continue;
+                }
+
+                position += GetOperandSize(opcode.OperandType, il, position);
+            }
+        }
+    }
+
+    private static int GetOperandSize(OperandType operandType, byte[] il, int position) => operandType switch
+    {
+        OperandType.InlineNone => 0,
+        OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+        OperandType.InlineVar => 2,
+        OperandType.InlineBrTarget
+            or OperandType.InlineI
+            or OperandType.InlineSig
+            or OperandType.InlineString => 4,
+        OperandType.ShortInlineR => 4,
+        OperandType.InlineI8 or OperandType.InlineR => 8,
+        OperandType.InlineSwitch => sizeof(int) + (BitConverter.ToInt32(il, position) * sizeof(int)),
+        _ => throw new InvalidOperationException($"Unsupported IL operand type {operandType}."),
+    };
+
+    private static readonly Dictionary<ushort, OpCode> OpCodesByValue = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field.FieldType == typeof(OpCode))
+        .Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(opcode => unchecked((ushort)opcode.Value));
 }

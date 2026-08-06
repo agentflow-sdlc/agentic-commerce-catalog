@@ -4,6 +4,8 @@ namespace Catalog.Product.Tests;
 
 public sealed class ProductEngineTests
 {
+    private const string ProductId = "PRODUCT-00000000-0000-4000-8000-000000000001";
+
     private static readonly DateTimeOffset Timestamp =
         new(2026, 8, 5, 12, 30, 0, TimeSpan.FromHours(-5));
 
@@ -13,14 +15,14 @@ public sealed class ProductEngineTests
     public void CreateNormalizesInputAndAppliesDeterministicDefaults()
     {
         var product = _engine.Create(
-            " PRODUCT-1 ",
+            $" {ProductId} ",
             " sku-001 ",
             " Product name ",
             " Product description ",
             10.50m,
             Timestamp);
 
-        Assert.Equal("PRODUCT-1", product.Id);
+        Assert.Equal(ProductId, product.Id);
         Assert.Equal("SKU-001", product.Sku);
         Assert.Equal("Product name", product.Name);
         Assert.Equal("Product description", product.Description);
@@ -34,7 +36,7 @@ public sealed class ProductEngineTests
     public void CreateAcceptsZeroPriceAndNormalizesEmptyDescriptionToNull()
     {
         var product = _engine.Create(
-            "PRODUCT-2",
+            ProductId,
             "SKU-002",
             "Free product",
             "   ",
@@ -49,14 +51,14 @@ public sealed class ProductEngineTests
     public void CreateRejectsPriceThatCannotBeRepresentedByDecimal18Scale2()
     {
         var precisionException = Assert.Throws<ProductValidationException>(() => _engine.Create(
-            "PRODUCT-PRICE-PRECISION",
+            ProductId,
             "SKU-PRECISION",
             "Product",
             null,
             1.001m,
             Timestamp));
         var rangeException = Assert.Throws<ProductValidationException>(() => _engine.Create(
-            "PRODUCT-PRICE-RANGE",
+            ProductId,
             "SKU-RANGE",
             "Product",
             null,
@@ -81,7 +83,7 @@ public sealed class ProductEngineTests
         string expectedCode)
     {
         var exception = Assert.Throws<ProductValidationException>(() => _engine.Create(
-            "PRODUCT-3",
+            ProductId,
             sku,
             name,
             null,
@@ -89,5 +91,17 @@ public sealed class ProductEngineTests
             Timestamp));
 
         Assert.Equal(expectedCode, exception.Code);
+    }
+
+    [Theory]
+    [InlineData("PRODUCT-NOT-A-GUID")]
+    [InlineData("WRONG-00000000-0000-4000-8000-000000000001")]
+    [InlineData("product-00000000-0000-4000-8000-000000000001")]
+    [InlineData("")]
+    public void NormalizeIdRejectsInvalidStableIdentifiers(string id)
+    {
+        var exception = Assert.Throws<ProductValidationException>(() => _engine.NormalizeId(id));
+
+        Assert.Equal("PRODUCT_ID_INVALID", exception.Code);
     }
 }

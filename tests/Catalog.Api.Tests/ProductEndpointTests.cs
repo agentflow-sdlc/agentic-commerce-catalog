@@ -41,6 +41,9 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
         Assert.Equal("Product name", created.Data.Name);
         Assert.True(created.Data.IsActive);
         Assert.Equal(created.Data.CreatedAt, created.Data.UpdatedAt);
+        Assert.Equal(
+            postResponse.Headers.GetValues("X-Correlation-ID").Single(),
+            created.CorrelationId);
         Assert.True(document.RootElement.GetProperty("data").TryGetProperty("createdAt", out _));
         Assert.False(document.RootElement.GetProperty("data").TryGetProperty("CreatedAt", out _));
         Assert.Equal($"/products/{created.Data.Id}", postResponse.Headers.Location?.OriginalString);
@@ -69,8 +72,28 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal(
-            "PRODUCT_PRICE_INVALID",
+            "PRODUCT_VALIDATION_FAILED",
             body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Empty(body.RootElement.GetProperty("error").GetProperty("details").EnumerateObject());
+    }
+
+    [Theory]
+    [InlineData(" ", "Product")]
+    [InlineData("SKU-REQUIRED-TEXT", " ")]
+    public async Task PostRejectsMissingRequiredProductText(string sku, string name)
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/products",
+            new CreateProductRequest(sku, name, null, 1m),
+            CancellationToken.None);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            "PRODUCT_VALIDATION_FAILED",
+            body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Empty(body.RootElement.GetProperty("error").GetProperty("details").EnumerateObject());
     }
 
     [Fact]
@@ -88,6 +111,7 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
         Assert.Equal(
             "REQUEST_VALIDATION_FAILED",
             body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Empty(body.RootElement.GetProperty("error").GetProperty("details").EnumerateObject());
     }
 
     [Fact]
@@ -110,13 +134,16 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
         Assert.Equal(
             "PRODUCT_SKU_ALREADY_EXISTS",
             body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(
+            sku.ToUpperInvariant(),
+            body.RootElement.GetProperty("error").GetProperty("details").GetProperty("sku").GetString());
     }
 
     [Fact]
     public async Task GetUnknownProductReturnsStableNotFoundError()
     {
         using var response = await _client.GetAsync(
-            "/products/PRODUCT-UNKNOWN",
+            "/products/PRODUCT-00000000-0000-4000-8000-000000000099",
             CancellationToken.None);
         using var body = JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(CancellationToken.None));
@@ -128,6 +155,22 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
         Assert.Equal(
             response.Headers.GetValues("X-Correlation-ID").Single(),
             body.RootElement.GetProperty("correlationId").GetString());
+    }
+
+    [Fact]
+    public async Task GetRejectsInvalidProductIdBeforeTheUseCaseQueriesPersistence()
+    {
+        using var response = await _client.GetAsync(
+            "/products/PRODUCT-NOT-A-GUID",
+            CancellationToken.None);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            "PRODUCT_VALIDATION_FAILED",
+            body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Empty(body.RootElement.GetProperty("error").GetProperty("details").EnumerateObject());
     }
 }
 

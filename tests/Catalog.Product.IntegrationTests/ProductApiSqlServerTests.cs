@@ -15,16 +15,31 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
 
     [SqlServerFact]
     [Trait("Category", "SqlIntegration")]
+    public async Task HealthRemainsAvailableWithTheSqlBackedApplicationHost()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/health");
+        request.Headers.Add("X-Correlation-ID", "sql-health-test");
+        using var response = await fixture.Client.SendAsync(request, CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("sql-health-test", response.Headers.GetValues("X-Correlation-ID").Single());
+    }
+
+    [SqlServerFact]
+    [Trait("Category", "SqlIntegration")]
     public async Task PostThenGetProductTraversesTheCompleteVerticalSlice()
     {
         var sku = $"sku-{Guid.NewGuid():N}";
-        using var postResponse = await fixture.Client.PostAsJsonAsync(
-            "/products",
-            new CreateProductRequest(sku, " Product name ", " Description ", 10.50m),
-            CancellationToken.None);
-        var created = await postResponse.Content.ReadFromJsonAsync<ProductResponseEnvelope>(
-            SerializerOptions,
-            CancellationToken.None);
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, "/products")
+        {
+            Content = JsonContent.Create(
+                new CreateProductRequest(sku, " Product name ", " Description ", 10.50m)),
+        };
+        postRequest.Headers.Add("X-Correlation-ID", "sql-product-test");
+        using var postResponse = await fixture.Client.SendAsync(postRequest, CancellationToken.None);
+        var createdJson = await postResponse.Content.ReadAsStringAsync(CancellationToken.None);
+        var created = JsonSerializer.Deserialize<ProductResponseEnvelope>(createdJson, SerializerOptions);
+        using var createdDocument = JsonDocument.Parse(createdJson);
 
         Assert.Equal(HttpStatusCode.Created, postResponse.StatusCode);
         Assert.NotNull(created);
@@ -33,6 +48,10 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
         Assert.True(created.Data.IsActive);
         Assert.Equal(created.Data.CreatedAt, created.Data.UpdatedAt);
         Assert.Equal($"/products/{created.Data.Id}", postResponse.Headers.Location?.OriginalString);
+        Assert.Equal("sql-product-test", postResponse.Headers.GetValues("X-Correlation-ID").Single());
+        Assert.Equal("sql-product-test", created.CorrelationId);
+        Assert.True(createdDocument.RootElement.GetProperty("data").TryGetProperty("createdAt", out _));
+        Assert.False(createdDocument.RootElement.GetProperty("data").TryGetProperty("CreatedAt", out _));
 
         using var getResponse = await fixture.Client.GetAsync(
             $"/products/{created.Data.Id}",
@@ -44,6 +63,34 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
         Assert.NotNull(fetched);
         Assert.Equal(created.Data, fetched.Data);
+    }
+
+    [SqlServerFact]
+    [Trait("Category", "SqlIntegration")]
+    public async Task PostRejectsInvalidProductFieldsWithoutWritingThem()
+    {
+        var cases = new[]
+        {
+            new CreateProductRequest(" ", "Product", null, 1m),
+            new CreateProductRequest($"SKU-{Guid.NewGuid():N}", " ", null, 1m),
+            new CreateProductRequest($"SKU-{Guid.NewGuid():N}", "Product", null, -0.01m),
+        };
+
+        foreach (var testCase in cases)
+        {
+            using var response = await fixture.Client.PostAsJsonAsync(
+                "/products",
+                testCase,
+                CancellationToken.None);
+            using var body = JsonDocument.Parse(
+                await response.Content.ReadAsStringAsync(CancellationToken.None));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(
+                "PRODUCT_VALIDATION_FAILED",
+                body.RootElement.GetProperty("error").GetProperty("code").GetString());
+            Assert.Empty(body.RootElement.GetProperty("error").GetProperty("details").EnumerateObject());
+        }
     }
 
     [SqlServerFact]
@@ -74,7 +121,7 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
     public async Task GetUnknownProductReturnsStableNotFoundError()
     {
         using var response = await fixture.Client.GetAsync(
-            "/products/PRODUCT-UNKNOWN",
+            "/products/PRODUCT-00000000-0000-4000-8000-000000000099",
             CancellationToken.None);
         using var body = JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(CancellationToken.None));
@@ -86,6 +133,23 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
         Assert.Equal(
             response.Headers.GetValues("X-Correlation-ID").Single(),
             body.RootElement.GetProperty("correlationId").GetString());
+    }
+
+    [SqlServerFact]
+    [Trait("Category", "SqlIntegration")]
+    public async Task GetRejectsInvalidProductIdFormat()
+    {
+        using var response = await fixture.Client.GetAsync(
+            "/products/PRODUCT-NOT-A-GUID",
+            CancellationToken.None);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            "PRODUCT_VALIDATION_FAILED",
+            body.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Empty(body.RootElement.GetProperty("error").GetProperty("details").EnumerateObject());
     }
 
     [SqlServerFact]

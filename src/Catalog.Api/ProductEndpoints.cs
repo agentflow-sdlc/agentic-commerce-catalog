@@ -16,8 +16,11 @@ internal static class ProductEndpoints
                     CreateProductRequest request,
                     ProductManager manager,
                     HttpContext context,
+                    ILogger<ProductEndpointLogCategory> logger,
                     CancellationToken cancellationToken) =>
                 {
+                    var correlationId = CorrelationIdMiddleware.GetCorrelationId(context);
+                    CatalogApiLog.ProductCreateStarted(logger, correlationId);
                     var product = await manager.CreateAsync(
                         new CreateProductCommand(
                             request.Sku,
@@ -26,6 +29,7 @@ internal static class ProductEndpoints
                             request.Price),
                         cancellationToken);
                     var response = CreateEnvelope(product, context);
+                    CatalogApiLog.ProductCreated(logger, product.Id, correlationId);
 
                     return Results.Created($"/products/{product.Id}", response);
                 })
@@ -43,9 +47,13 @@ internal static class ProductEndpoints
                     string id,
                     ProductManager manager,
                     HttpContext context,
+                    ILogger<ProductEndpointLogCategory> logger,
                     CancellationToken cancellationToken) =>
                 {
+                    var correlationId = CorrelationIdMiddleware.GetCorrelationId(context);
+                    CatalogApiLog.ProductGetStarted(logger, id, correlationId);
                     var product = await manager.GetByIdAsync(id, cancellationToken);
+                    CatalogApiLog.ProductRetrieved(logger, product.Id, correlationId);
                     return Results.Ok(CreateEnvelope(product, context));
                 })
             .WithName("GetProduct")
@@ -70,4 +78,8 @@ internal static class ProductEndpoints
             product.CreatedAt,
             product.UpdatedAt),
         CorrelationIdMiddleware.GetCorrelationId(context));
+}
+
+internal sealed class ProductEndpointLogCategory
+{
 }

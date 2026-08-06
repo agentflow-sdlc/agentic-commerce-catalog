@@ -33,6 +33,7 @@ components:
     responsibilities:
       - product-domain-model
       - deterministic-product-rules
+      - stable-product-id-validation
       - neutral-accessor-ports
     allowedDependencies: []
   accessors:
@@ -102,3 +103,16 @@ persistence:
   azureSqlCompatible: true
   connectionString: CatalogDb
   migration: src/Catalog.Accessors/Migrations/20260805214332_InitialProduct.cs
+  integrationTests:
+    strategy: ephemeral-sql-server-testcontainer
+    dockerRequired: true
+
+runtimeAbstractions:
+  time: System.TimeProvider
+  productIds: Catalog.Managers.Products.IProductIdGenerator
+
+errors:
+  functionalValidation: PRODUCT_VALIDATION_FAILED
+  duplicateSku: PRODUCT_SKU_ALREADY_EXISTS
+  productNotFound: PRODUCT_NOT_FOUND
+  unexpected: UNEXPECTED_ERROR

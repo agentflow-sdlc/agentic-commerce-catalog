@@ -67,12 +67,28 @@ paths:
         "201":
           description: Product created.
           headers:
+            Location:
+              description: Relative URL of the created Product resource.
+              schema:
+                type: string
+              example: /products/PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
             X-Correlation-ID:
               $ref: "#/components/headers/CorrelationId"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductEnvelope"
+              example:
+                data:
+                  id: PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
+                  sku: BOOK-001
+                  name: Domain-Driven Design
+                  description: A software design reference.
+                  price: 42.5
+                  isActive: true
+                  createdAt: "2026-08-06T12:00:00Z"
+                  updatedAt: "2026-08-06T12:00:00Z"
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -117,6 +133,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductEnvelope"
+              example:
+                data:
+                  id: PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
+                  sku: BOOK-001
+                  name: Domain-Driven Design
+                  description: A software design reference.
+                  price: 42.5
+                  isActive: true
+                  createdAt: "2026-08-06T12:00:00Z"
+                  updatedAt: "2026-08-06T12:00:00Z"
+                correlationId: 10bdd36c-973a-42fe-98fd-113a670f07ec
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -220,7 +249,7 @@ components:
       description: Stable product identifier.
       schema:
         type: string
-        minLength: 1
+        pattern: "^PRODUCT-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
       example: PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
     CorrelationId:
       name: X-Correlation-ID
@@ -249,15 +278,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
-          example:
-            error:
-              code: REQUEST_VALIDATION_FAILED
-              message: The request payload is invalid.
-              details:
-                issues:
-                  - path: price
-                    message: Too small
-            correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
+          examples:
+            requestSyntax:
+              summary: Malformed JSON or incompatible JSON type
+              value:
+                error:
+                  code: REQUEST_VALIDATION_FAILED
+                  message: The request payload is invalid.
+                  details: {}
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
+            productValidation:
+              summary: Product business validation failed
+              value:
+                error:
+                  code: PRODUCT_VALIDATION_FAILED
+                  message: The product request is invalid.
+                  details: {}
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
     NotFound:
       description: The requested resource does not exist.
       headers:
@@ -272,7 +309,7 @@ components:
               code: PRODUCT_NOT_FOUND
               message: The requested product does not exist.
               details:
-                productId: PRODUCT-UNKNOWN
+                productId: PRODUCT-00000000-0000-4000-8000-000000000099
             correlationId: 10bdd36c-973a-42fe-98fd-113a670f07ec
     Conflict:
       description: A unique catalog value already exists.
@@ -303,6 +340,7 @@ components:
             error:
               code: UNEXPECTED_ERROR
               message: An unexpected error occurred.
+              details: {}
             correlationId: 7ecf5fea-bd97-42bf-a715-1553798a5180
   schemas:
     Health:
@@ -326,7 +364,7 @@ components:
       properties:
         id:
           type: string
-          minLength: 1
+          pattern: "^PRODUCT-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         sku:
           type: string
           minLength: 1
@@ -415,7 +453,7 @@ components:
     Error:
       type: object
       additionalProperties: false
-      required: [code, message]
+      required: [code, message, details]
       properties:
         code:
           type: string

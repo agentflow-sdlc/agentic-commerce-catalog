@@ -2,6 +2,8 @@ namespace Catalog.Engines.Products;
 
 public interface IProductEngine
 {
+    string NormalizeId(string? id);
+
     Product Create(
         string id,
         string? sku,
@@ -13,10 +15,26 @@ public interface IProductEngine
 
 public sealed class ProductEngine : IProductEngine
 {
+    public const string IdPrefix = "PRODUCT-";
     public const int MaxSkuLength = 64;
     public const int MaxNameLength = 200;
     public const int MaxDescriptionLength = 2000;
     public const decimal MaxPrice = 9999999999999999.99m;
+
+    public string NormalizeId(string? id)
+    {
+        var normalized = id?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized)
+            || !normalized.StartsWith(IdPrefix, StringComparison.Ordinal)
+            || !Guid.TryParseExact(normalized[IdPrefix.Length..], "D", out var identifier))
+        {
+            throw new ProductValidationException(
+                "PRODUCT_ID_INVALID",
+                "Product ID must use the PRODUCT-<guid> format.");
+        }
+
+        return $"{IdPrefix}{identifier:D}";
+    }
 
     public Product Create(
         string id,
@@ -26,7 +44,7 @@ public sealed class ProductEngine : IProductEngine
         decimal? price,
         DateTimeOffset timestamp)
     {
-        var normalizedId = RequireText(id, "PRODUCT_ID_REQUIRED", "Product ID is required.");
+        var normalizedId = NormalizeId(id);
         var normalizedSku = RequireText(sku, "PRODUCT_SKU_REQUIRED", "SKU is required.")
             .ToUpperInvariant();
         var normalizedName = RequireText(name, "PRODUCT_NAME_REQUIRED", "Product name is required.");
