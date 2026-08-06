@@ -10,6 +10,7 @@ public sealed class DependencyRulesTests
     private static readonly Assembly ManagersAssembly = typeof(Catalog.Managers.AssemblyMarker).Assembly;
     private static readonly Assembly EnginesAssembly = typeof(Catalog.Engines.AssemblyMarker).Assembly;
     private static readonly Assembly AccessorsAssembly = typeof(Catalog.Accessors.AssemblyMarker).Assembly;
+    private static readonly Assembly MigratorAssembly = typeof(Catalog.DatabaseMigrator.AssemblyMarker).Assembly;
 
     private static readonly Assembly[] ProductionAssemblies =
     [
@@ -18,6 +19,7 @@ public sealed class DependencyRulesTests
         ManagersAssembly,
         EnginesAssembly,
         AccessorsAssembly,
+        MigratorAssembly,
     ];
 
     [Fact]
@@ -148,6 +150,52 @@ public sealed class DependencyRulesTests
                 GetReferenceNames(assembly),
                 reference => reference.EndsWith(".Tests", StringComparison.Ordinal));
         }
+    }
+
+    [Fact]
+    public void ProductiveProjectsDoNotDependOnPulumiInfrastructure()
+    {
+        foreach (var assembly in ProductionAssemblies)
+        {
+            Assert.DoesNotContain("Catalog.Infrastructure", GetReferenceNames(assembly));
+            Assert.DoesNotContain(
+                GetReferenceNames(assembly),
+                reference => reference.StartsWith("Pulumi", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void NeutralLayersRemainIndependentFromAzureSdkAssemblies()
+    {
+        foreach (var assembly in new[] { ContractsAssembly, EnginesAssembly, ManagersAssembly })
+        {
+            Assert.DoesNotContain(
+                GetReferenceNames(assembly),
+                reference => reference.StartsWith("Azure", StringComparison.Ordinal)
+                    || reference.StartsWith("Microsoft.Azure", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void ApiCannotExecuteEntityFrameworkMigrations()
+    {
+        var references = GetReferenceNames(ApiAssembly);
+
+        Assert.DoesNotContain(
+            references,
+            reference => reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal));
+        Assert.DoesNotContain("Catalog.DatabaseMigrator", references);
+    }
+
+    [Fact]
+    public void DatabaseMigratorDoesNotExposeAnHttpApplication()
+    {
+        var references = GetReferenceNames(MigratorAssembly);
+
+        Assert.DoesNotContain(
+            references,
+            reference => reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+                || reference.StartsWith("Microsoft.AspNetCore.Mvc", StringComparison.Ordinal));
     }
 
     private static string[] GetReferenceNames(Assembly assembly) => assembly
