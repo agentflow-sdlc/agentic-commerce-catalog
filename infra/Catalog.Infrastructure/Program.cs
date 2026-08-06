@@ -15,7 +15,7 @@ return await Deployment.RunAsync(async () =>
     var sqlAdminLogin = catalogConfig.Get("sqlAdminLogin") ?? "catalogsqladmin";
     var sqlDatabaseSku = catalogConfig.Get("sqlDatabaseSku") ?? "Basic";
     var sqlAdminPassword = catalogConfig.RequireSecret("sqlAdminPassword");
-    var names = CatalogNames.Create(suffix);
+    var names = CatalogNames.Create(suffix, sqlLocation);
     var tags = new InputMap<string>
     {
         ["environment"] = "dev",

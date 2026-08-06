@@ -154,8 +154,9 @@ try {
     & $pulumiPath config set catalog:sqlAdminLogin catalogsqladmin --non-interactive | Out-Host
     & $pulumiPath config set catalog:sqlDatabaseSku Basic --non-interactive | Out-Host
     $sqlLocation = & $pulumiPath config get catalog:sqlLocation 2>$null
-    if ([string]::IsNullOrWhiteSpace($sqlLocation)) {
-        & $pulumiPath config set catalog:sqlLocation eastus --non-interactive | Out-Host
+    if ([string]::IsNullOrWhiteSpace($sqlLocation) `
+        -or $sqlLocation -in @('eastus', 'eastus2')) {
+        & $pulumiPath config set catalog:sqlLocation centralus --non-interactive | Out-Host
     }
 
     $configText = (& $pulumiPath config) -join "`n"

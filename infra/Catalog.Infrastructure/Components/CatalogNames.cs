@@ -17,7 +17,7 @@ internal sealed record CatalogNames(
     string CatalogApi,
     string DatabaseMigratorJob)
 {
-    public static CatalogNames Create(string suffix) => new(
+    public static CatalogNames Create(string suffix, string sqlLocation) => new(
         ResourceGroup: $"rg-agentic-catalog-dev-{suffix}",
         ContainerRegistry: $"agenticcatalog{suffix}",
         LogAnalytics: $"log-agentic-catalog-dev-{suffix}",
@@ -25,7 +25,7 @@ internal sealed record CatalogNames(
         ContainerAppsEnvironment: $"cae-agentic-catalog-dev-{suffix}",
         ManagedIdentity: $"id-agentic-catalog-dev-{suffix}",
         KeyVault: $"kv-agentic-cat-{suffix}",
-        SqlServer: $"sql-agentic-catalog-dev-{suffix}",
+        SqlServer: $"sql-agentic-catalog-dev-{Normalize(sqlLocation)}-{suffix}",
         SqlDatabase: "catalog",
         VirtualNetwork: $"vnet-agentic-catalog-dev-{suffix}",
         ContainerAppsSubnet: "snet-container-apps",
@@ -33,4 +33,10 @@ internal sealed record CatalogNames(
         SqlPrivateEndpoint: $"pe-sql-agentic-catalog-dev-{suffix}",
         CatalogApi: $"ca-agentic-catalog-api-dev-{suffix}",
         DatabaseMigratorJob: $"caj-agentic-catalog-migrate-dev-{suffix}");
+
+    private static string Normalize(string value) => new(
+        value
+            .Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
 }
