@@ -82,10 +82,15 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
             "/openapi/v1.json",
             CancellationToken.None);
         var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        using var document = JsonDocument.Parse(body);
+        var paths = document.RootElement.GetProperty("paths");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains("/health", body, StringComparison.Ordinal);
-        Assert.Contains("/products", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("/categories", body, StringComparison.Ordinal);
+        Assert.True(paths.GetProperty("/health").TryGetProperty("get", out _));
+        Assert.True(paths.GetProperty("/products").TryGetProperty("post", out _));
+        Assert.False(paths.GetProperty("/products").TryGetProperty("get", out _));
+        Assert.True(paths.GetProperty("/products/{id}").TryGetProperty("get", out _));
+        Assert.False(paths.TryGetProperty("/products/{id}/status", out _));
+        Assert.False(paths.TryGetProperty("/categories", out _));
     }
 }

@@ -48,7 +48,10 @@ app.MapProductEndpoints();
 app.MapFallback(
     (HttpContext context) => Results.Json(
         new ErrorResponse(
-            new ErrorDetail("ROUTE_NOT_FOUND", "The requested route does not exist."),
+            new ErrorDetail(
+                "ROUTE_NOT_FOUND",
+                "The requested route does not exist.",
+                new Dictionary<string, object?>()),
             CorrelationIdMiddleware.GetCorrelationId(context)),
         statusCode: StatusCodes.Status404NotFound));
 

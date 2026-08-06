@@ -64,8 +64,18 @@ public sealed class ProductManager
         string id,
         CancellationToken cancellationToken)
     {
-        var product = await _productAccessor.FindByIdAsync(id, cancellationToken)
-            ?? throw new ProductNotFoundException(id);
+        string normalizedId;
+        try
+        {
+            normalizedId = _productEngine.NormalizeId(id);
+        }
+        catch (ProductValidationException exception)
+        {
+            throw new ProductRequestException(exception.Code, exception.Message, exception);
+        }
+
+        var product = await _productAccessor.FindByIdAsync(normalizedId, cancellationToken)
+            ?? throw new ProductNotFoundException(normalizedId);
 
         return Map(product);
     }

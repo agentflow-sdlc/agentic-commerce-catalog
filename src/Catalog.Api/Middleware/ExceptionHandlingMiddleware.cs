@@ -27,9 +27,13 @@ public sealed class ExceptionHandlingMiddleware
         catch (Exception exception) when (!context.Response.HasStarted)
         {
             var correlationId = CorrelationIdMiddleware.GetCorrelationId(context);
-            var (statusCode, code, message, isExpected) = MapException(exception);
+            var (statusCode, code, message, details, isExpected) = MapException(exception);
 
-            if (!isExpected)
+            if (isExpected)
+            {
+                LogExpectedException(exception, correlationId);
+            }
+            else
             {
                 CatalogApiLog.UnexpectedError(
                     _logger,
@@ -46,39 +50,68 @@ public sealed class ExceptionHandlingMiddleware
 
             await context.Response.WriteAsJsonAsync(
                 new ErrorResponse(
-                    new ErrorDetail(code, message),
+                    new ErrorDetail(code, message, details),
                     correlationId),
                 context.RequestAborted);
         }
     }
 
-    private static (int StatusCode, string Code, string Message, bool IsExpected) MapException(
+    private void LogExpectedException(Exception exception, string correlationId)
+    {
+        switch (exception)
+        {
+            case ProductRequestException validation:
+                CatalogApiLog.ProductValidationFailed(_logger, validation.Code, correlationId);
+                break;
+            case ProductConflictException conflict:
+                CatalogApiLog.ProductSkuConflict(_logger, conflict.Sku, correlationId);
+                break;
+            case ProductNotFoundException notFound:
+                CatalogApiLog.ProductNotFound(_logger, notFound.ProductId, correlationId);
+                break;
+            case BadHttpRequestException:
+                CatalogApiLog.ProductRequestSyntaxInvalid(_logger, correlationId);
+                break;
+        }
+    }
+
+    private static (
+        int StatusCode,
+        string Code,
+        string Message,
+        IReadOnlyDictionary<string, object?> Details,
+        bool IsExpected) MapException(
         Exception exception) => exception switch
         {
             ProductRequestException validation => (
-                    StatusCodes.Status400BadRequest,
-                    validation.Code,
-                    validation.Message,
-                    true),
+                StatusCodes.Status400BadRequest,
+                "PRODUCT_VALIDATION_FAILED",
+                "The product request is invalid.",
+                new Dictionary<string, object?>(),
+                true),
             BadHttpRequestException => (
                 StatusCodes.Status400BadRequest,
                 "REQUEST_VALIDATION_FAILED",
                 "The request payload is invalid.",
+                new Dictionary<string, object?>(),
                 true),
             ProductNotFoundException notFound => (
                 StatusCodes.Status404NotFound,
                 "PRODUCT_NOT_FOUND",
                 notFound.Message,
+                new Dictionary<string, object?> { ["productId"] = notFound.ProductId },
                 true),
             ProductConflictException conflict => (
-                    StatusCodes.Status409Conflict,
-                    "PRODUCT_SKU_ALREADY_EXISTS",
-                    conflict.Message,
-                    true),
+                StatusCodes.Status409Conflict,
+                "PRODUCT_SKU_ALREADY_EXISTS",
+                conflict.Message,
+                new Dictionary<string, object?> { ["sku"] = conflict.Sku },
+                true),
             _ => (
                 StatusCodes.Status500InternalServerError,
                 "UNEXPECTED_ERROR",
                 "An unexpected error occurred.",
+                new Dictionary<string, object?>(),
                 false),
         };
 }
