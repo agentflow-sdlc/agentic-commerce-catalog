@@ -3,7 +3,9 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Catalog.Contracts;
+using Catalog.Engines.Categories;
 using Catalog.Engines.Products;
+using Catalog.Managers.Categories;
 using Catalog.Managers.Products;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -39,6 +41,7 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
         Assert.NotNull(created);
         Assert.Equal(sku.ToUpperInvariant(), created.Data.Sku);
         Assert.Equal("Product name", created.Data.Name);
+        Assert.Null(created.Data.CategoryId);
         Assert.True(created.Data.IsActive);
         Assert.Equal(created.Data.CreatedAt, created.Data.UpdatedAt);
         Assert.Equal(
@@ -58,6 +61,95 @@ public sealed class ProductEndpointTests : IClassFixture<ProductApiFactory>
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
         Assert.NotNull(fetched);
         Assert.Equal(created.Data, fetched.Data);
+    }
+
+    [Fact]
+    public async Task ProductCanReferenceAnExistingCategoryAndListsWithTheSameContract()
+    {
+        using var categoryResponse = await _client.PostAsJsonAsync(
+            "/categories",
+            new CreateCategoryRequest($"Category {Guid.NewGuid():N}"),
+            CancellationToken.None);
+        var category = await categoryResponse.Content.ReadFromJsonAsync<CategoryResponseEnvelope>(
+            SerializerOptions,
+            CancellationToken.None);
+        Assert.Equal(HttpStatusCode.Created, categoryResponse.StatusCode);
+        Assert.NotNull(category);
+
+        using var productResponse = await _client.PostAsJsonAsync(
+            "/products",
+            new CreateProductRequest(
+                $"SKU-{Guid.NewGuid():N}",
+                "Categorized product",
+                null,
+                5m,
+                category.Data.Id),
+            CancellationToken.None);
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponseEnvelope>(
+            SerializerOptions,
+            CancellationToken.None);
+        using var listResponse = await _client.GetAsync("/products", CancellationToken.None);
+        var products = await listResponse.Content.ReadFromJsonAsync<ProductListResponseEnvelope>(
+            SerializerOptions,
+            CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        Assert.NotNull(product);
+        Assert.Equal(category.Data.Id, product.Data.CategoryId);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        Assert.NotNull(products);
+        Assert.Contains(products.Data, item => item == product.Data);
+    }
+
+    [Fact]
+    public async Task PostRejectsAnUnknownCategory()
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/products",
+            new CreateProductRequest(
+                $"SKU-{Guid.NewGuid():N}",
+                "Unknown category",
+                null,
+                5m,
+                "CATEGORY-00000000-0000-4000-8000-000000000099"),
+            CancellationToken.None);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(
+            "CATEGORY_NOT_FOUND",
+            body.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task PatchChangesProductStatusAndRejectsAMissingState()
+    {
+        using var createResponse = await _client.PostAsJsonAsync(
+            "/products",
+            new CreateProductRequest($"SKU-{Guid.NewGuid():N}", "Status product", null, 1m),
+            CancellationToken.None);
+        var created = await createResponse.Content.ReadFromJsonAsync<ProductResponseEnvelope>(
+            SerializerOptions,
+            CancellationToken.None);
+        Assert.NotNull(created);
+
+        using var deactivateResponse = await _client.PatchAsJsonAsync(
+            $"/products/{created.Data.Id}/status",
+            new UpdateProductStatusRequest(false),
+            CancellationToken.None);
+        var deactivated = await deactivateResponse.Content.ReadFromJsonAsync<ProductResponseEnvelope>(
+            SerializerOptions,
+            CancellationToken.None);
+        using var invalidResponse = await _client.PatchAsJsonAsync(
+            $"/products/{created.Data.Id}/status",
+            new { },
+            CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, deactivateResponse.StatusCode);
+        Assert.NotNull(deactivated);
+        Assert.False(deactivated.Data.IsActive);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
     }
 
     [Fact]
@@ -181,10 +273,14 @@ public sealed class ProductApiFactory : WebApplicationFactory<Program>
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IProductAccessor>();
+            services.RemoveAll<ICategoryAccessor>();
             services.RemoveAll<IProductIdGenerator>();
+            services.RemoveAll<ICategoryIdGenerator>();
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<IProductAccessor, TestProductAccessor>();
+            services.AddSingleton<ICategoryAccessor, TestCategoryAccessor>();
             services.AddSingleton<IProductIdGenerator, TestProductIdGenerator>();
+            services.AddSingleton<ICategoryIdGenerator, TestCategoryIdGenerator>();
             services.AddSingleton<TimeProvider>(new TestTimeProvider());
         });
     }
@@ -214,6 +310,18 @@ public sealed class ProductApiFactory : WebApplicationFactory<Program>
             }
         }
 
+        public Task<IReadOnlyList<Product>> ListAsync(CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                IReadOnlyList<Product> products = _products.Values
+                    .OrderByDescending(product => product.CreatedAt)
+                    .ThenByDescending(product => product.Id, StringComparer.Ordinal)
+                    .ToArray();
+                return Task.FromResult(products);
+            }
+        }
+
         public Task AddAsync(Product product, CancellationToken cancellationToken)
         {
             lock (_sync)
@@ -222,11 +330,80 @@ public sealed class ProductApiFactory : WebApplicationFactory<Program>
                 return Task.CompletedTask;
             }
         }
+
+        public Task<bool> UpdateStatusAsync(
+            string id,
+            bool isActive,
+            DateTimeOffset updatedAt,
+            CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                if (!_products.TryGetValue(id, out var product))
+                {
+                    return Task.FromResult(false);
+                }
+
+                _products[id] = product with { IsActive = isActive, UpdatedAt = updatedAt };
+                return Task.FromResult(true);
+            }
+        }
+    }
+
+    private sealed class TestCategoryAccessor : ICategoryAccessor
+    {
+        private readonly Dictionary<string, Category> _categories = new(StringComparer.Ordinal);
+        private readonly object _sync = new();
+
+        public Task<bool> ExistsByIdAsync(string id, CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                return Task.FromResult(_categories.ContainsKey(id));
+            }
+        }
+
+        public Task<bool> ExistsByNormalizedNameAsync(
+            string normalizedName,
+            CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                return Task.FromResult(
+                    _categories.Values.Any(category => category.NormalizedName == normalizedName));
+            }
+        }
+
+        public Task AddAsync(Category category, CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                _categories.Add(category.Id, category);
+                return Task.CompletedTask;
+            }
+        }
+
+        public Task<IReadOnlyList<Category>> ListAsync(CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                IReadOnlyList<Category> categories = _categories.Values
+                    .OrderBy(category => category.NormalizedName, StringComparer.Ordinal)
+                    .ThenBy(category => category.Id, StringComparer.Ordinal)
+                    .ToArray();
+                return Task.FromResult(categories);
+            }
+        }
     }
 
     private sealed class TestProductIdGenerator : IProductIdGenerator
     {
         public string NewId() => $"PRODUCT-{Guid.NewGuid()}";
+    }
+
+    private sealed class TestCategoryIdGenerator : ICategoryIdGenerator
+    {
+        public string NewId() => $"CATEGORY-{Guid.NewGuid()}";
     }
 
     private sealed class TestTimeProvider : TimeProvider

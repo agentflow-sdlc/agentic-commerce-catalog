@@ -3,9 +3,8 @@ info:
   title: Agentic Commerce Catalog API
   version: 0.1.0
   description: >-
-    Technology-neutral HTTP contract for Catalog. The .NET service implements
-    GET /health, POST /products, and GET /products/{id}; the remaining Product
-    and Category operations are preserved for later vertical slices.
+    Technology-neutral HTTP contract for the .NET Catalog service. Product and
+    Category operations preserve the behavior of the historical public API.
   license:
     name: UNLICENSED
 security: []
@@ -63,6 +62,7 @@ paths:
               name: Domain-Driven Design
               description: A software design reference.
               price: 42.5
+              categoryId: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
       responses:
         "201":
           description: Product created.
@@ -85,12 +85,15 @@ paths:
                   name: Domain-Driven Design
                   description: A software design reference.
                   price: 42.5
+                  categoryId: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
                   isActive: true
                   createdAt: "2026-08-06T12:00:00Z"
                   updatedAt: "2026-08-06T12:00:00Z"
                 correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "500":
@@ -99,7 +102,7 @@ paths:
       operationId: listProducts
       summary: List products
       tags: [Products]
-      x-implementation-status: pending-dotnet
+      x-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       responses:
@@ -112,6 +115,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductListEnvelope"
+              example:
+                data:
+                  - id: PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
+                    sku: BOOK-001
+                    name: Domain-Driven Design
+                    price: 42.5
+                    isActive: true
+                    createdAt: "2026-08-06T12:00:00Z"
+                    updatedAt: "2026-08-06T12:00:00Z"
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
         "500":
           $ref: "#/components/responses/InternalServerError"
   /products/{id}:
@@ -140,6 +153,7 @@ paths:
                   name: Domain-Driven Design
                   description: A software design reference.
                   price: 42.5
+                  categoryId: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
                   isActive: true
                   createdAt: "2026-08-06T12:00:00Z"
                   updatedAt: "2026-08-06T12:00:00Z"
@@ -155,7 +169,7 @@ paths:
       operationId: updateProductStatus
       summary: Activate or deactivate a product
       tags: [Products]
-      x-implementation-status: pending-dotnet
+      x-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/CorrelationId"
@@ -182,6 +196,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductEnvelope"
+              example:
+                data:
+                  id: PRODUCT-136fc61e-510d-4d7a-ad63-02e134e1b77f
+                  sku: BOOK-001
+                  name: Domain-Driven Design
+                  price: 42.5
+                  isActive: false
+                  createdAt: "2026-08-06T12:00:00Z"
+                  updatedAt: "2026-08-06T13:00:00Z"
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -193,7 +217,7 @@ paths:
       operationId: createCategory
       summary: Create a category
       tags: [Categories]
-      x-implementation-status: pending-dotnet
+      x-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       requestBody:
@@ -215,6 +239,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CategoryEnvelope"
+              example:
+                data:
+                  id: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
+                  name: Books
+                  description: Printed and digital books.
+                  createdAt: "2026-08-06T12:00:00Z"
+                  updatedAt: "2026-08-06T12:00:00Z"
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -225,7 +257,7 @@ paths:
       operationId: listCategories
       summary: List categories
       tags: [Categories]
-      x-implementation-status: pending-dotnet
+      x-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/CorrelationId"
       responses:
@@ -238,6 +270,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CategoryListEnvelope"
+              example:
+                data:
+                  - id: CATEGORY-27f9802f-2159-437b-9140-45e76d2a4296
+                    name: Books
+                    createdAt: "2026-08-06T12:00:00Z"
+                    updatedAt: "2026-08-06T12:00:00Z"
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
         "500":
           $ref: "#/components/responses/InternalServerError"
 components:
@@ -295,6 +334,14 @@ components:
                   message: The product request is invalid.
                   details: {}
                 correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
+            categoryValidation:
+              summary: Category business validation failed
+              value:
+                error:
+                  code: CATEGORY_VALIDATION_FAILED
+                  message: The category request is invalid.
+                  details: {}
+                correlationId: 1701dda0-c828-4307-8f4c-11212a8e0412
     NotFound:
       description: The requested resource does not exist.
       headers:
@@ -304,13 +351,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
-          example:
-            error:
-              code: PRODUCT_NOT_FOUND
-              message: The requested product does not exist.
-              details:
-                productId: PRODUCT-00000000-0000-4000-8000-000000000099
-            correlationId: 10bdd36c-973a-42fe-98fd-113a670f07ec
+          examples:
+            product:
+              value:
+                error:
+                  code: PRODUCT_NOT_FOUND
+                  message: The requested product does not exist.
+                  details:
+                    productId: PRODUCT-00000000-0000-4000-8000-000000000099
+                correlationId: 10bdd36c-973a-42fe-98fd-113a670f07ec
+            category:
+              value:
+                error:
+                  code: CATEGORY_NOT_FOUND
+                  message: The requested category does not exist.
+                  details:
+                    categoryId: CATEGORY-00000000-0000-4000-8000-000000000099
+                correlationId: 10bdd36c-973a-42fe-98fd-113a670f07ec
     Conflict:
       description: A unique catalog value already exists.
       headers:
@@ -320,13 +377,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
-          example:
-            error:
-              code: PRODUCT_SKU_ALREADY_EXISTS
-              message: A product with this SKU already exists.
-              details:
-                sku: BOOK-001
-            correlationId: 13f789c9-a032-48c6-b1eb-4439d1464657
+          examples:
+            productSku:
+              value:
+                error:
+                  code: PRODUCT_SKU_ALREADY_EXISTS
+                  message: A product with this SKU already exists.
+                  details:
+                    sku: BOOK-001
+                correlationId: 13f789c9-a032-48c6-b1eb-4439d1464657
+            categoryName:
+              value:
+                error:
+                  code: CATEGORY_NAME_ALREADY_EXISTS
+                  message: A category with this normalized name already exists.
+                  details:
+                    normalizedName: books
+                correlationId: 13f789c9-a032-48c6-b1eb-4439d1464657
     InternalServerError:
       description: An unexpected server error occurred.
       headers:
@@ -381,6 +448,10 @@ components:
           minimum: 0
           maximum: 9999999999999999.99
           multipleOf: 0.01
+        categoryId:
+          type: string
+          minLength: 1
+          maxLength: 128
         isActive:
           type: boolean
         createdAt:
@@ -431,6 +502,10 @@ components:
           minimum: 0
           maximum: 9999999999999999.99
           multipleOf: 0.01
+        categoryId:
+          type: string
+          minLength: 1
+          maxLength: 128
     UpdateProductStatusRequest:
       type: object
       additionalProperties: false

@@ -1,29 +1,33 @@
 # Catalog Use Cases
 
-| Use case | Current state | Responsibility |
+| Use case | State | Implemented flow |
 | --- | --- | --- |
-| Check service health | Implemented | `Catalog.Api` returns runtime metadata without an external dependency. |
-| Create product | Implemented | Manager coordinates deterministic Product creation and persistence through the domain accessor port. |
-| Get product by ID | Implemented | Manager retrieves through the domain accessor port and rejects unknown IDs. |
-| List products | Pending | Future Manager-coordinated retrieval. |
-| Change product status | Pending | Future Engine decision and Manager persistence. |
-| Create category | Pending | Future Engine normalization and validation plus Manager coordination. |
-| List categories | Pending | Future Manager-coordinated retrieval. |
-| Associate category with product | Pending | Explicitly excluded from the current Product model and migration. |
+| Check health | Implemented | API returns service metadata and correlation header. |
+| Create Product | Implemented | Manager validates through Engine, checks SKU/Category through ports, and persists through Product Accessor. |
+| Get Product | Implemented | Engine validates ID before Manager queries the Product Accessor. |
+| List Products | Implemented | Manager requests the deterministically ordered collection from Product Accessor. |
+| Change Product status | Implemented | Manager loads Product, Engine creates the baseline-compatible transition, and Accessor updates state/time. |
+| Create Category | Implemented | Manager invokes Category Engine, checks normalized-name uniqueness, and persists through Category Accessor. |
+| List Categories | Implemented | Manager returns the deterministically ordered Category Accessor result. |
+| Associate Category during Product creation | Implemented | Manager verifies an explicit Category ID; Accessor persists the nullable foreign key. |
 
-## Create Product
+## Create Product with optional Category
 
-1. API binds `CreateProductRequest` and calls `ProductManager`.
-2. Manager supplies an application ID and the current `TimeProvider` timestamp to `ProductEngine`.
-3. Engine normalizes and validates SKU, name, description, and decimal price; it applies active state and timestamps.
-4. Manager checks the normalized SKU through `IProductAccessor`.
-5. `SqlProductAccessor` maps the Product and commits it through EF Core.
-6. API returns `201 Created`, a `Location` header, the Product response, and the correlation ID.
+1. API maps `CreateProductRequest` without creating a Category implicitly.
+2. Product Engine validates all Product input before any Accessor call.
+3. Manager checks normalized SKU uniqueness.
+4. When `categoryId` exists, Manager checks it through `ICategoryAccessor`.
+5. Product Accessor inserts Product; SQL unique/FK constraints protect concurrent changes.
+6. API returns `201`, Product envelope, `Location`, and correlation ID.
 
-## Get Product by ID
+## List Products
 
-1. API passes the route ID to `ProductManager`.
-2. Engine validates and canonicalizes the `PRODUCT-<guid>` ID before any persistence call.
-3. Manager retrieves through `IProductAccessor` only after successful validation.
-4. An invalid ID becomes the public `PRODUCT_VALIDATION_FAILED` response with empty details while the internal `PRODUCT_ID_INVALID` reason is logged; an unknown canonical ID becomes `PRODUCT_NOT_FOUND`.
-5. A known Product is mapped to the public response without exposing EF types.
+Product Accessor issues one no-tracking query ordered by creation time and ID descending. Empty data returns `200` with `data: []`.
+
+## Change Product status
+
+Manager validates and loads Product, then Product Engine returns a copy containing only the requested state and controlled `updatedAt`. Matching the historical baseline, repeated status requests still refresh `updatedAt`. Accessor performs one targeted SQL update.
+
+## Create and list Categories
+
+Category Engine creates display and normalized names. Manager uses the normalized name for a duplicate pre-check, while the SQL unique index handles races. Category Accessor lists by normalized name then ID; the normalized name never enters the public contract.

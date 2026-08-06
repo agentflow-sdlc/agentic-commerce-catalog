@@ -1,3 +1,4 @@
+using Catalog.Engines.Categories;
 using Catalog.Engines.Products;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,7 @@ public static class CatalogAccessorServiceCollectionExtensions
             options.UseSqlServer(
                 connectionString,
                 sqlServer => sqlServer.EnableRetryOnFailure()));
+        services.AddScoped<ICategoryAccessor, SqlCategoryAccessor>();
         services.AddScoped<IProductAccessor, SqlProductAccessor>();
 
         return services;

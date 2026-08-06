@@ -35,25 +35,43 @@ commands:
   restore: dotnet restore Catalog.sln
   build: dotnet build Catalog.sln --configuration Release --no-restore
   test: dotnet test Catalog.sln --configuration Release --no-build
-  sqlIntegrationTest: RUN_SQL_SERVER_TESTS=true dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj --configuration Release
+  sqlIntegrationTest: RUN_SQL_SERVER_TESTS=true dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj --configuration Release --no-build
   migrationAdd: dotnet ef migrations add <Name> --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --output-dir Migrations
   databaseUpdate: dotnet ef database update --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj
   formatCheck: dotnet format Catalog.sln --verify-no-changes --no-restore
   openApiValidation: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
   migrationValidation: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
+  migrationScript: dotnet ef migrations script --idempotent --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
 
 requirements:
   sqlIntegrationTests:
     docker: required
     sharedAzureDatabase: prohibited
+    migrationStrategy: initial-then-latest-on-clean-database
+
+features:
+  implemented:
+    - health
+    - product-create
+    - product-get-by-id
+    - product-list
+    - product-status
+    - category-create
+    - category-list
+    - optional-product-category-association
+  pending:
+    - external-playwright
+    - azure-deployment
+    - agents
 
 qualityGates:
   - restore
   - build
   - api-tests
-  - product-tests
+  - catalog-unit-tests
   - sql-integration-tests
   - architecture-tests
   - formatting
   - openapi-validation
   - migration-validation
+  - migration-script

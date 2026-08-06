@@ -44,7 +44,7 @@ steps:
       --no-build
       --logger "trx;LogFileName=Catalog.Product.Tests.trx"
       --results-directory "$(testResultsDirectory)"
-    displayName: Run Product unit tests
+    displayName: Run Product and Category unit tests
 
   - script: >-
       dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
@@ -72,9 +72,26 @@ steps:
       --no-build
       --logger "trx;LogFileName=Catalog.Product.IntegrationTests.trx"
       --results-directory "$(testResultsDirectory)"
-    displayName: Run SQL Server integration tests
+    displayName: Apply clean migration chain and run SQL Server integration tests
     env:
       RUN_SQL_SERVER_TESTS: "true"
+
+  - script: >-
+      dotnet ef migrations has-pending-model-changes
+      --project src/Catalog.Accessors/Catalog.Accessors.csproj
+      --startup-project src/Catalog.Api/Catalog.Api.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+    displayName: Validate EF Core migration model
+
+  - script: >-
+      dotnet ef migrations script --idempotent
+      --project src/Catalog.Accessors/Catalog.Accessors.csproj
+      --startup-project src/Catalog.Api/Catalog.Api.csproj
+      --configuration $(buildConfiguration)
+      --no-build
+      --output "$(testResultsDirectory)/Catalog.Migrations.sql"
+    displayName: Generate idempotent migration evidence
 
   - script: >-
       dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
@@ -87,14 +104,6 @@ steps:
 
   - script: dotnet format Catalog.sln --verify-no-changes --no-restore
     displayName: Verify formatting
-
-  - script: >-
-      dotnet ef migrations has-pending-model-changes
-      --project src/Catalog.Accessors/Catalog.Accessors.csproj
-      --startup-project src/Catalog.Api/Catalog.Api.csproj
-      --configuration $(buildConfiguration)
-      --no-build
-    displayName: Validate EF Core migration
 
   - task: PublishTestResults@2
     displayName: Publish test results

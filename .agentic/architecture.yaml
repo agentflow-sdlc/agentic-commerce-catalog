@@ -17,6 +17,7 @@ components:
       - middleware
       - health
       - product-endpoints
+      - category-endpoints
       - development-openapi
     allowedDependencies:
       - contracts
@@ -26,13 +27,16 @@ components:
     project: src/Catalog.Managers/Catalog.Managers.csproj
     responsibilities:
       - product-use-case-coordination
+      - category-use-case-coordination
     allowedDependencies:
       - engines-and-domain-ports
   engines:
     project: src/Catalog.Engines/Catalog.Engines.csproj
     responsibilities:
       - product-domain-model
+      - category-domain-model
       - deterministic-product-rules
+      - deterministic-category-rules
       - stable-product-id-validation
       - neutral-accessor-ports
     allowedDependencies: []
@@ -86,7 +90,6 @@ endpoints:
       path: /products
     - method: GET
       path: /products/{id}
-  pending:
     - method: GET
       path: /products
     - method: PATCH
@@ -95,14 +98,21 @@ endpoints:
       path: /categories
     - method: GET
       path: /categories
+  pending: []
 
 persistence:
-  status: implemented-for-product
+  status: product-category-parity
   boundary: Catalog.Accessors
   provider: ef-core-sql-server
   azureSqlCompatible: true
   connectionString: CatalogDb
-  migration: src/Catalog.Accessors/Migrations/20260805214332_InitialProduct.cs
+  migrations:
+    - src/Catalog.Accessors/Migrations/20260805214332_InitialProduct.cs
+    - src/Catalog.Accessors/Migrations/20260806153200_AddCategoriesAndProductCategory.cs
+  constraints:
+    - unique-product-sku
+    - unique-category-normalized-name
+    - nullable-product-category-foreign-key
   integrationTests:
     strategy: ephemeral-sql-server-testcontainer
     dockerRequired: true
@@ -110,9 +120,13 @@ persistence:
 runtimeAbstractions:
   time: System.TimeProvider
   productIds: Catalog.Managers.Products.IProductIdGenerator
+  categoryIds: Catalog.Managers.Categories.ICategoryIdGenerator
 
 errors:
   functionalValidation: PRODUCT_VALIDATION_FAILED
   duplicateSku: PRODUCT_SKU_ALREADY_EXISTS
   productNotFound: PRODUCT_NOT_FOUND
+  categoryValidation: CATEGORY_VALIDATION_FAILED
+  duplicateCategoryName: CATEGORY_NAME_ALREADY_EXISTS
+  categoryNotFound: CATEGORY_NOT_FOUND
   unexpected: UNEXPECTED_ERROR

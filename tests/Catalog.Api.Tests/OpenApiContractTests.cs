@@ -23,25 +23,36 @@ public sealed class OpenApiContractTests
         Assert.NotNull(result.Diagnostic);
         Assert.Empty(result.Diagnostic.Errors);
         Assert.Equal(
-            3,
+            7,
             source.Split("x-implementation-status: implemented", StringSplitOptions.None).Length - 1);
         Assert.Equal(
-            4,
+            0,
             source.Split("x-implementation-status: pending-dotnet", StringSplitOptions.None).Length - 1);
-        Assert.Contains(
-            "x-implementation-status: implemented",
-            GetOperationBlock(source, "createProduct"),
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "x-implementation-status: implemented",
-            GetOperationBlock(source, "getProduct"),
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "x-implementation-status: pending-dotnet",
-            GetOperationBlock(source, "listProducts"),
-            StringComparison.Ordinal);
+
+        foreach (var operation in new[]
+                 {
+                     "getHealth",
+                     "createProduct",
+                     "listProducts",
+                     "getProduct",
+                     "updateProductStatus",
+                     "createCategory",
+                     "listCategories",
+                 })
+        {
+            Assert.Contains(
+                "x-implementation-status: implemented",
+                GetOperationBlock(source, operation),
+                StringComparison.Ordinal);
+        }
+
         Assert.Contains("Location:", GetOperationBlock(source, "createProduct"), StringComparison.Ordinal);
+        Assert.DoesNotContain("Location:", GetOperationBlock(source, "createCategory"), StringComparison.Ordinal);
         Assert.Contains("PRODUCT_VALIDATION_FAILED", source, StringComparison.Ordinal);
+        Assert.Contains("CATEGORY_VALIDATION_FAILED", source, StringComparison.Ordinal);
+        Assert.Contains("CATEGORY_NAME_ALREADY_EXISTS", source, StringComparison.Ordinal);
+        Assert.Contains("CATEGORY_NOT_FOUND", source, StringComparison.Ordinal);
+        Assert.Contains("categoryId:", source, StringComparison.Ordinal);
         Assert.Contains("required: [code, message, details]", source, StringComparison.Ordinal);
         Assert.Contains("^PRODUCT-[0-9a-fA-F]", source, StringComparison.Ordinal);
     }

@@ -4,4 +4,5 @@ public sealed record CreateProductCommand(
     string? Sku,
     string? Name,
     string? Description,
-    decimal? Price);
+    decimal? Price,
+    string? CategoryId = null);

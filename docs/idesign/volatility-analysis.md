@@ -1,31 +1,19 @@
 # Catalog Volatility Analysis
 
-## Business volatility
-
-| Volatility | Stable boundary | Current status |
+| Volatility | Stable boundary | Implemented decision |
 | --- | --- | --- |
-| Product rules | `Catalog.Engines` | Create rules implemented; later Product behavior remains pending. |
-| Category rules | `Catalog.Engines` | Deferred. |
-| Use-case sequencing | `Catalog.Managers` | Create and get-by-ID implemented. |
-| Required information access | Domain ports in `Catalog.Engines` | `IProductAccessor` implemented by SQL Accessors. |
-| Public API contract | `Catalog.Contracts` and `openapi/catalog-api.yaml` | Health, create Product, and get Product implemented. |
-| Stable IDs | `ProductEngine` format plus `IProductIdGenerator` | Application generates `PRODUCT-<guid>`; Manager validates and canonicalizes before reads. |
-| Time | .NET `TimeProvider` at the Manager boundary | Engine receives timestamps and remains deterministic. |
-| Functional errors | Manager-controlled exceptions translated by `Catalog.Api` | Validation, conflict, and not-found outcomes are explicit and include safe details. |
+| HTTP contracts | `Catalog.Contracts` plus `openapi/catalog-api.yaml` | One Product representation, one Category representation, collection envelopes, status request, correlation, and stable errors. |
+| Product creation rules | `ProductEngine` | SKU/text normalization, decimal price validation, optional Category ID, active default, controlled ID/time. |
+| Product state rules | `ProductEngine` | One status transition operation; baseline-compatible timestamp update even when the requested state repeats. |
+| Category rules | `CategoryEngine` | Required name, collapsed whitespace, lowercase comparison name, optional description, controlled ID/time. |
+| Product–Category association | `ProductManager` plus domain ports | Manager verifies existence; Product Engine remains deterministic; SQL foreign key protects races. |
+| Collection queries | Domain ports implemented by `Catalog.Accessors` | Products use `createdAt DESC, id DESC`; Categories use normalized name and ID ascending; no pagination or N+1 queries. |
+| Persistence | `Catalog.Accessors` | EF entities and mappings remain outside business components. |
+| SQL engine | Accessor provider registration | SQL Server chosen and Azure SQL compatible; real constraints are verified with an ephemeral SQL Server. |
+| Uniqueness | Manager coordination plus SQL indexes | Pre-checks provide clear outcomes; unique SKU and normalized Category name indexes remain authoritative. |
+| Referential integrity | SQL foreign key translated by Accessors | Nullable Product Category reference uses `ON DELETE SET NULL`; unknown references become `CATEGORY_NOT_FOUND`. |
+| Time and IDs | `TimeProvider`, Product/Category ID generators | Engines receive values and never call the system clock or GUID generator. |
+| Errors | Manager exceptions translated in API middleware | Validation, conflicts, Product not found, Category not found, and unexpected errors remain distinct and safe. |
+| Deployment | Future pipeline/infrastructure boundary | Validation CI only; Azure deployment remains pending. |
 
-Business rules and required-access contracts remain independent of HTTP, databases, files, cloud SDKs, and deployment technology.
-
-## Technology volatility
-
-| Volatility | Stable boundary | Current status |
-| --- | --- | --- |
-| Persistence mapping | `Catalog.Accessors` | EF Core Product entity, Fluent mapping, and migration implemented. |
-| SQL engine | `Catalog.Accessors` provider configuration | SQL Server provider selected and Azure SQL compatible; domain remains provider-neutral. |
-| File or object storage | `Catalog.Accessors` | No file or object-store accessor implemented. |
-| External information sources | `Catalog.Accessors` | No external API accessor implemented. |
-| HTTP exposure | `Catalog.Api` | ASP.NET Core endpoints and translation implemented. |
-| Deployment | Pipeline and future infrastructure | Validation CI only; Azure deployment remains pending. |
-| Observability | API middleware | Structured request and Product use-case logs with correlation and no request bodies. |
-| Future integrations | Managers plus domain ports and Accessors | No external integration implemented. |
-
-`Catalog.Accessors` means access to information containers generally. It is not restricted to SQL and must not absorb business rules or use-case sequencing.
+`Catalog.Accessors` is the general information-container access layer. SQL is the current implementation; future file, API, or object-store access belongs behind domain-owned ports in the same layer.

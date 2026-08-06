@@ -88,9 +88,10 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(paths.GetProperty("/health").TryGetProperty("get", out _));
         Assert.True(paths.GetProperty("/products").TryGetProperty("post", out _));
-        Assert.False(paths.GetProperty("/products").TryGetProperty("get", out _));
+        Assert.True(paths.GetProperty("/products").TryGetProperty("get", out _));
         Assert.True(paths.GetProperty("/products/{id}").TryGetProperty("get", out _));
-        Assert.False(paths.TryGetProperty("/products/{id}/status", out _));
-        Assert.False(paths.TryGetProperty("/categories", out _));
+        Assert.True(paths.GetProperty("/products/{id}/status").TryGetProperty("patch", out _));
+        Assert.True(paths.GetProperty("/categories").TryGetProperty("post", out _));
+        Assert.True(paths.GetProperty("/categories").TryGetProperty("get", out _));
     }
 }
