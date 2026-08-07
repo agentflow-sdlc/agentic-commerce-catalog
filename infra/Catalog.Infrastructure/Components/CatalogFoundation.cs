@@ -227,34 +227,8 @@ internal sealed class CatalogFoundation : ComponentResource
             },
             childOptions);
 
-        if (args.FreeFirst)
-        {
-            // This rule admits every Azure tenant, not just this subscription, so the admin
-            // password is the only barrier for anyone able to create a VM. It stays because
-            // the narrower options are all blocked here, and the reason is worth recording:
-            //
-            // A virtual network rule is the correct fix and was attempted. Azure rejects it
-            // outright - "Microsoft.Sql resources in centralus cannot be ACL-ed to virtual
-            // network ... in eastus2" - because such rules require the server and the
-            // network to share a region. The server sits in centralus (see the sqlLocation
-            // default in bootstrap-pulumi.ps1) while everything else is in eastus2.
-            //
-            // Closing this therefore costs something in every direction: a Private Endpoint
-            // is about $7/month, and colocating the server means recreating it and losing
-            // the database. Both are deliberate decisions, not cleanup, so neither is taken
-            // here. Production should restore the Private Endpoint.
-            _ = new FirewallRule(
-                "catalog-sql-allow-azure-services",
-                new FirewallRuleArgs
-                {
-                    ResourceGroupName = ResourceGroup.Name,
-                    ServerName = SqlServer.Name,
-                    FirewallRuleName = "AllowAllWindowsAzureIps",
-                    StartIpAddress = "0.0.0.0",
-                    EndIpAddress = "0.0.0.0",
-                },
-                childOptions);
-        }
+        // The firewall rule that admits the workload is created after the Container Apps
+        // environment, because it allows that environment's outbound address.
 
         // Azure SQL Database free offer: General Purpose Serverless Gen5 2 vCore, 32 GB,
         // auto-pause, with a free monthly allowance. It removes the only remaining fixed
@@ -429,6 +403,38 @@ internal sealed class CatalogFoundation : ComponentResource
                 Tags = args.Tags,
             },
             childOptions);
+
+        if (args.FreeFirst)
+        {
+            // Admits only this environment's outbound address. It replaces the
+            // 0.0.0.0-0.0.0.0 rule, which reads as "allow Azure services" but admits every
+            // tenant on the platform, leaving the admin password as the only barrier for
+            // anyone able to start a VM. Verified against the live server: with this rule
+            // alone the migration job connects and the API serves /products.
+            //
+            // A virtual network rule would be the stronger form, but Azure requires the
+            // server and the network to share a region and rejects the pairing outright:
+            // the server is in centralus because this subscription offers no serverless
+            // Gen5 in eastus2, which is also what the free offer below needs. Firewall
+            // rules carry no such restriction.
+            //
+            // ponytail: this pins one address. StaticIp is stable for the life of the
+            // environment but is not contractually permanent on Consumption, so recreating
+            // the environment moves it. Pulumi reissues the rule from the same output on
+            // the next deployment, and the migration job fails loudly if it ever drifts.
+            // A Private Endpoint (~$7/month) is the upgrade that removes the coupling.
+            _ = new FirewallRule(
+                "catalog-sql-allow-container-apps",
+                new FirewallRuleArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    ServerName = SqlServer.Name,
+                    FirewallRuleName = "AllowContainerAppsEgress",
+                    StartIpAddress = ContainerAppsEnvironment.StaticIp,
+                    EndIpAddress = ContainerAppsEnvironment.StaticIp,
+                },
+                childOptions);
+        }
 
         var connectionString = Output.Tuple<string, string>(
                 SqlServer.FullyQualifiedDomainName,

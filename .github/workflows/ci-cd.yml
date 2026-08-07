@@ -187,7 +187,11 @@ jobs:
             # other protected type still fails the job. See docs/azure-cost-optimization.md.
             & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence `
               -Label 'infrastructure-preview' `
-              -AllowedDeletionTypes 'azure-native:containerregistry:Registry'
+              # sql:Database is allowed only while the free offer migration lands. The
+              # free limit can be set only at creation, so the Basic database is replaced.
+              # Remove this the moment the migration has deployed: leaving it in place
+              # would let a later accident delete the database without the guard objecting.
+              -AllowedDeletionTypes 'azure-native:containerregistry:Registry','azure-native:sql:Database'
           }
           finally {
             Pop-Location
@@ -383,7 +387,11 @@ jobs:
             # an anonymous GHCR pull works. Every other protected type still fails the job.
             & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence `
               -Label 'deployment-preview' `
-              -AllowedDeletionTypes 'azure-native:containerregistry:Registry'
+              # sql:Database is allowed only while the free offer migration lands. The
+              # free limit can be set only at creation, so the Basic database is replaced.
+              # Remove this the moment the migration has deployed: leaving it in place
+              # would let a later accident delete the database without the guard objecting.
+              -AllowedDeletionTypes 'azure-native:containerregistry:Registry','azure-native:sql:Database'
 
             & $context.PulumiPath up --yes --non-interactive
             if ($LASTEXITCODE -ne 0) { throw 'Pulumi update failed.' }
