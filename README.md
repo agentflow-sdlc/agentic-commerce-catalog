@@ -2,7 +2,7 @@
 
 `agentic-commerce-catalog` is the Catalog service for the Agentic SDLC MVP. Product and Category behavior runs on .NET 10, ASP.NET Core, EF Core, and Azure SQL. Pulumi C# provisions an isolated Azure dev environment, while Azure Container Apps hosts the API and the one-shot database migrator.
 
-Azure DevOps administers Boards, Pipelines, states, and evidence. GitHub stores the repository, branches, commits, and pull requests.
+GitHub stores the repository, branches, commits, and pull requests, and runs CI/CD through GitHub Actions. Azure DevOps Boards remains the work-item and state system; it no longer runs pipelines for this repository.
 
 ## Available endpoints
 
@@ -154,52 +154,53 @@ See [`infra/Catalog.Infrastructure/README.md`](infra/Catalog.Infrastructure/READ
 
 ## CI/CD
 
-GitHub is the only source of truth for code; Azure Pipelines executes the SDLC and stores the evidence. Azure DevOps is connected **directly** to the GitHub repository. This repository contains no GitHub Actions workflow, and none is planned — `azure-pipelines.yml` is the single CI/CD definition.
+GitHub owns the code and runs the SDLC. [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) is the single CI/CD definition; there is no Azure Pipelines definition in this repository and no second deployment pipeline.
 
 | | |
 | --- | --- |
-| Azure DevOps organization | `emma-agent-test` |
-| Azure DevOps project | `agentic-sdlc` |
-| Pipeline | `agentic-commerce-catalog` |
-| GitHub service connection | `sc-catalog-github` |
-| Azure service connection | `sc-catalog-azure-dev` (Workload Identity Federation) |
-| Variable group | `catalog-dev` |
+| Workflow | `ci-cd` |
+| Runner | `ubuntu-latest` |
+| Azure authentication | OIDC / workload identity federation via `azure/login` |
+| Repository variables | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `PULUMI_BACKEND_URL`, `PULUMI_STACK`, `CATALOG_SQL_ADMIN_LOGIN` |
+| Repository secrets | `PULUMI_CONFIG_PASSPHRASE`, `CATALOG_SQL_ADMIN_PASSWORD` |
 
 ### Pull request into `main` — validation only, never deploys
 
 ```text
-GitHub Pull Request -> Azure Pipelines
-  Validate               restore, build, unit/API/architecture/integration tests,
-                         OpenAPI validation, EF migration model, dotnet format
-  InfrastructurePreview  pulumi preview against the existing dev stack
-  PublishEvidence        test results + preview digest as artifacts
+GitHub Pull Request -> GitHub Actions
+  validate                restore, build, unit/API/architecture/integration tests,
+                          OpenAPI validation, EF migration model, dotnet format
+  infrastructure-preview  pulumi preview against the existing dev stack
+  publish-evidence        test results + preview digest as artifacts
 ```
 
-The deployment stages are gated on `Build.Reason != PullRequest` **and** `Build.SourceBranch == refs/heads/main`, so a pull request can never build images, run `pulumi up`, migrate the database, or touch Azure.
+The deployment jobs are gated on `github.event_name != 'pull_request'` **and** `github.ref == 'refs/heads/main'`, so a pull request can never build images, run `pulumi up`, migrate the database, or mutate Azure.
 
-### Commit on `main` — full deployment
+### Push to `main` — full deployment
 
 ```text
-GitHub main -> Azure Pipelines
-  Validate               identical quality gates
-  InfrastructurePreview  pulumi preview against the existing dev stack
-  BuildImages            az acr build -> catalog-api and catalog-database-migrator,
-                         immutable tag <build-id>-<short-sha>, never `latest`
-  Deploy                 pulumi preview (destruction gate) -> pulumi up --yes
-  RunMigrations          start the Container Apps migrator job and await its result
-  SmokeTests             GET /health, /products, /categories
-  PublishEvidence        consolidated artifacts + run manifest
+GitHub main -> GitHub Actions
+  validate                identical quality gates
+  infrastructure-preview  pulumi preview against the existing dev stack
+  build-images            az acr build -> catalog-api and catalog-database-migrator,
+                          immutable tag <run-id>-<short-sha>, never `latest`
+  deploy                  pulumi preview (destruction gate) -> pulumi up --yes
+  run-migrations          start the Container Apps migrator job and await its result
+  smoke-tests             GET /health, /products, /categories
+  publish-evidence        consolidated artifacts + run manifest
 ```
+
+A `concurrency` group keeps two runs from mutating the shared `dev` stack at once: pull request runs supersede each other, while `main` deployments queue.
 
 ### Infrastructure safety
 
-Every `pulumi up` is preceded by `pulumi preview` through [`scripts/invoke-pulumi-preview.ps1`](scripts/invoke-pulumi-preview.ps1). The preview digest is stored as evidence and the stage **fails before any update** when the plan would delete or replace Azure SQL, ACR, Key Vault, the managed identity, Log Analytics, Application Insights, the Container Apps environment, the container app, or the resource group. `pulumi destroy` is never invoked by the pipeline. The guard has an offline self-check, [`scripts/tests/preview-guard-check.ps1`](scripts/tests/preview-guard-check.ps1), which runs as part of Validate.
+Every `pulumi up` is preceded by `pulumi preview` through [`scripts/invoke-pulumi-preview.ps1`](scripts/invoke-pulumi-preview.ps1). The preview digest is stored as evidence and the job **fails before any update** when the plan would delete or replace Azure SQL, ACR, Key Vault, the managed identity, Log Analytics, Application Insights, the Container Apps environment, the container app, or the resource group. `pulumi destroy` is never invoked by the workflow. The guard has an offline self-check, [`scripts/tests/preview-guard-check.ps1`](scripts/tests/preview-guard-check.ps1), which runs as part of `validate`.
 
-The pipeline reuses the existing backend, the existing `dev` stack, and the existing passphrase secrets provider. It creates no second registry, database, vault, or container app, so repeated runs on the same commit converge on the same resources.
+The workflow reuses the existing backend, the existing `dev` stack, and the existing passphrase secrets provider. It creates no second registry, database, vault, or container app, so repeated runs on the same commit converge on the same resources.
 
 ### Secrets
 
-`PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD` exist only as **secret** variables in the `catalog-dev` variable group. They are referenced by name in `azure-pipelines.yml` and never written to the repository, the pipeline logs, the artifacts, or the run manifest. Azure authentication uses Workload Identity Federation — there is no client secret, no PAT, and no storage account key in the deployment path.
+`PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD` exist only as GitHub repository **secrets**. They are referenced by name in the workflow and never written to the repository, the logs, the artifacts, or the run manifest. Azure authentication uses OIDC workload identity federation — there is no client secret, no PAT, and no storage account key in the deployment path. `permissions` is `contents: read` plus `id-token: write` and nothing else.
 
 ## Current limitations
 
@@ -209,7 +210,7 @@ Product and Category parity plus the Azure dev deployment are implemented. Produ
 
 ```text
 .agentic/                                   Machine-readable architecture and quality metadata
-.azuredevops/templates/                     Reusable Azure Pipelines step templates
+.github/workflows/ci-cd.yml                 The only CI/CD definition (GitHub Actions)
 .config/dotnet-tools.json                   Pinned dotnet-ef tool
 src/Catalog.Contracts/                      Public HTTP contracts
 src/Catalog.Api/                            ASP.NET Core endpoints and middleware
@@ -225,7 +226,6 @@ tests/                                       Unit, API, SQL integration, and arc
 openapi/                                     Provider-neutral HTTP contract
 docs/idesign/                                Implemented IDesign evidence
 docs/migration/                              Historical migration evidence
-azure-pipelines.yml                          The only CI/CD definition (Azure Pipelines)
 ```
 
 ## Previous baseline

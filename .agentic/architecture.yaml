@@ -166,25 +166,25 @@ deployment:
 
 cicd:
   sourceControl: github
-  orchestrator: azure-pipelines
-  githubActions: none
-  definition: azure-pipelines.yml
-  azureAuthentication: workload-identity-federation
+  orchestrator: github-actions
+  azurePipelines: none
+  definition: .github/workflows/ci-cd.yml
+  azureAuthentication: workload-identity-federation-oidc
   flows:
     pullRequest:
-      description: GitHub pull request into main triggers Azure Pipelines validation only.
+      description: GitHub pull request into main triggers GitHub Actions validation only.
       path:
         - github-pull-request
-        - azure-pipelines
+        - github-actions
         - validate
         - pulumi-preview
         - evidence
       deploys: false
     main:
-      description: GitHub commit on main triggers the full Azure deployment.
+      description: Push to GitHub main triggers the full Azure deployment.
       path:
         - github-main
-        - azure-pipelines
+        - github-actions
         - validate
         - pulumi-preview
         - build-images

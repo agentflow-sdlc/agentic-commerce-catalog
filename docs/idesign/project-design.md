@@ -20,15 +20,14 @@ These are not .NET projects, but they are part of the design and are enforced li
 
 | Asset | Responsibility | Allowed to | Prohibited from |
 | --- | --- | --- | --- |
-| `azure-pipelines.yml` | The single CI/CD definition: PR validation and `main` deployment | Reference secret variables by name, call the deployment scripts | Containing secret values; deploying from a pull request; a competing GitHub Actions workflow |
-| `.azuredevops/templates/pulumi-setup.yml` | Install the pinned Pulumi CLI and the SDK from `global.json` | Prepare an agent | Logging in, selecting a stack, or reading secrets |
+| `.github/workflows/ci-cd.yml` | The single CI/CD definition: PR validation and `main` deployment | Reference GitHub secrets by name, call the deployment scripts | Containing secret values; deploying from a pull request; a competing Azure Pipelines definition |
 | `scripts/bootstrap-pulumi.ps1` | Discover and select the existing backend and `dev` stack | Reconcile existing config, read the passphrase from the environment | Creating or migrating the backend; changing the secrets provider |
 | `scripts/invoke-pulumi-preview.ps1` | Run `pulumi preview`, store the digest, block destructive plans | Fail a stage | Running `pulumi up` or `pulumi destroy` |
 | `scripts/run-migrations-dev.ps1` | Start the Container Apps migrator job and await its result | Emit redacted diagnostics | Letting smoke tests run after a failed migration |
 | `scripts/smoke-test-dev.ps1` | Read-only verification of the deployed API | `GET` only | `POST`, writing permanent data, Playwright |
-| `scripts/tests/preview-guard-check.ps1` | Offline self-check of the destruction guard | Run in Validate with no Azure access | Requiring a backend, a login, or the network |
+| `scripts/tests/preview-guard-check.ps1` | Offline self-check of the destruction guard | Run in `validate` with no Azure access | Requiring a backend, a login, or the network |
 
-The deployment scripts are the shared implementation for both local operation and the pipeline, so the pipeline adds orchestration and evidence rather than a second, divergent deployment path.
+The deployment scripts are the shared implementation for both local operation and the workflow, so CI/CD adds orchestration and evidence rather than a second, divergent deployment path. That is also what made replacing the orchestrator cheap: moving from Azure Pipelines to GitHub Actions changed the workflow file and left every script untouched.
 
 The name `Catalog.Accessors` is deliberately broader than repositories. SQL, files, APIs, object stores, and other information containers belong here when a domain-owned port requires them.
 

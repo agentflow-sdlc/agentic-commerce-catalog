@@ -64,11 +64,12 @@ gates:
       - /products
       - /categories
 
-# Which gates each Azure Pipelines stage enforces, and which stages a pull request may run.
+# Which gates each GitHub Actions job enforces, and which jobs a pull request may run.
 pipeline:
-  definition: azure-pipelines.yml
-  stages:
-    Validate:
+  system: github-actions
+  definition: .github/workflows/ci-cd.yml
+  jobs:
+    validate:
       runsOnPullRequest: true
       gates:
         - restore
@@ -83,26 +84,26 @@ pipeline:
         - formatting
         - preview-guard-self-check
         - pulumi-build
-    InfrastructurePreview:
+    infrastructure-preview:
       runsOnPullRequest: true
       gates:
         - pulumi-preview
-    BuildImages:
+    build-images:
       runsOnPullRequest: false
       gates:
         - container-builds
-    Deploy:
+    deploy:
       runsOnPullRequest: false
       gates:
         - pulumi-preview
-    RunMigrations:
+    run-migrations:
       runsOnPullRequest: false
       gates:
         - database-migration-job
-    SmokeTests:
+    smoke-tests:
       runsOnPullRequest: false
       gates:
         - deployment-smoke-tests
-    PublishEvidence:
+    publish-evidence:
       runsOnPullRequest: true
       gates: []

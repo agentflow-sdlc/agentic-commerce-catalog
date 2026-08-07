@@ -91,15 +91,15 @@ Development defaults favor low cost:
 
 Resources that may incur cost without user traffic include Azure SQL, ACR storage/builds, Private Endpoint, Log Analytics/Application Insights ingestion and retention, Key Vault operations, and Container Apps environment/network consumption. Exact prices vary by subscription and region.
 
-## Azure DevOps configuration
+## GitHub Actions configuration
 
-`azure-pipelines.yml` runs this same flow automatically from GitHub. The Azure DevOps side is configured in organization `emma-agent-test`, project `agentic-sdlc`:
+`.github/workflows/ci-cd.yml` runs this same flow automatically from GitHub:
 
-- Pipeline `agentic-commerce-catalog`, sourced from the GitHub repository through service connection `sc-catalog-github`.
-- Azure Resource Manager service connection `sc-catalog-azure-dev`, using **Workload Identity Federation** — no client secret.
-- Variable group `catalog-dev`, holding `PULUMI_BACKEND_URL`, `PULUMI_STACK`, `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `CATALOG_SQL_ADMIN_LOGIN` plus the secret variables `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
+- Azure access through `azure/login` with **OIDC workload identity federation** — no client secret. The workflow declares `id-token: write` and `contents: read`.
+- Repository variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `PULUMI_BACKEND_URL`, `PULUMI_STACK`, `CATALOG_SQL_ADMIN_LOGIN`.
+- Repository secrets `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
 
-The federated identity needs, beyond `Contributor` on the subscription:
+The Entra application backing the federation carries federated credentials for `repo:<owner>/<repo>:ref:refs/heads/main` and `repo:<owner>/<repo>:pull_request`. It needs, beyond `Contributor` on the subscription:
 
 | Role | Scope | Why |
 | --- | --- | --- |
@@ -107,9 +107,9 @@ The federated identity needs, beyond `Contributor` on the subscription:
 | `Role Based Access Control Administrator` | the Catalog resource group | `CatalogWorkload` creates the `AcrPull`, `Key Vault Secrets User`, and `Monitoring Metrics Publisher` assignments |
 | `Key Vault Secrets Officer` | the Catalog Key Vault | Manage the `catalog-db` secret |
 
-Pull requests execute `Validate` and `InfrastructurePreview` only. Deployment stages are gated on the build not being a pull request and the branch being `main`.
+Pull requests execute `validate` and `infrastructure-preview` only. Deployment jobs are gated on the event not being a pull request and the ref being `refs/heads/main`.
 
-`scripts/invoke-pulumi-preview.ps1` runs before every update and fails the stage when the plan would delete or replace protected infrastructure, so the destroy safety rule above is enforced mechanically and not only by convention.
+`scripts/invoke-pulumi-preview.ps1` runs before every update and fails the job when the plan would delete or replace protected infrastructure, so the destroy safety rule above is enforced mechanically and not only by convention.
 
 ## Out of scope
 
