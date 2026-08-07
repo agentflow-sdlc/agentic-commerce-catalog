@@ -165,8 +165,13 @@ try {
         & $pulumiPath config set catalog:sqlLocation centralus --non-interactive | Out-Host
     }
 
-    $configText = (& $pulumiPath config) -join "`n"
-    $sqlPasswordConfigured = $configText -match '(?m)^catalog:sqlAdminPassword\s+\[secret\]\s*$'
+    # `pulumi config` strips the current project's namespace, so the key is listed as
+    # `sqlAdminPassword`, never `catalog:sqlAdminPassword`. Asking for the key directly is
+    # both correct and immune to changes in the table layout; all output is discarded
+    # because `config get` prints the decrypted secret.
+    & $pulumiPath config get catalog:sqlAdminPassword *>$null
+    $sqlPasswordConfigured = $LASTEXITCODE -eq 0
+    $global:LASTEXITCODE = 0
     if (-not [string]::IsNullOrWhiteSpace($env:CATALOG_SQL_ADMIN_PASSWORD)) {
         Set-PulumiSecretFromStandardInput `
             -PulumiPath $pulumiPath `

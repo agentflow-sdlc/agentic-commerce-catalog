@@ -1,11 +1,11 @@
-encryptionsalt: v1:uBVZwH4YnaM=:v1:7pKFYUnmiVk3DLLu:vUpuvbKtwmOFMdODg/3WEBtarrxC9w==
+encryptionsalt: v1:gPvVls4nk/o=:v1:jhwYjJk5wCib8msu:4rgAiVZVpMjYEXfzAnDZQ+XFMiU1XQ==
 config:
   azure-native:location: eastus2
   catalog:nameSuffix: "654964"
   catalog:sqlAdminLogin: catalogsqladmin
   catalog:sqlDatabaseSku: Basic
   catalog:sqlAdminPassword:
-    secure: v1:n/kPY8ODlgVMHT6z:qf29fEgyplgzTsRJStwKOkBv4UIyPO01d9rDJsR1tXxa45HtHcg6/a1aAZ8fSsOWngPXCcjThK9R6GR1DN644Q==
+    secure: v1:B0eEVAT2Xh9Bfpka:P6XXvcvOdJHrmg9acP2NvKnqPo37Q3++h53jzeloZvZnzbJ1lQ8OvBK03Nl3gc3a5pmjTRVDleM=
   catalog:deployWorkload: "true"
   catalog:sqlLocation: centralus
   catalog:costProfile: poc-free
