@@ -89,7 +89,10 @@ else {
         New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
     }
 
-    $previewJson = & $PulumiPath preview --json --non-interactive
+    # --show-sames keeps unchanged resources in the digest. Without it Pulumi emits only
+    # the changed steps, so the stored evidence would not show what the stack actually
+    # contains and the resource count would be meaningless to a reviewer.
+    $previewJson = & $PulumiPath preview --json --show-sames --non-interactive
     if ($LASTEXITCODE -ne 0) {
         $previewJson | Out-Host
         throw "Pulumi preview '$Label' failed."
