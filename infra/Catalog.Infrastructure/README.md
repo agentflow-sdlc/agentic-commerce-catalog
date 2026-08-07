@@ -99,7 +99,16 @@ Resources that may incur cost without user traffic include Azure SQL, ACR storag
 - Repository variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `PULUMI_BACKEND_URL`, `PULUMI_STACK`, `CATALOG_SQL_ADMIN_LOGIN`.
 - Repository secrets `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
 
-The Entra application backing the federation carries federated credentials for `repo:<owner>/<repo>:ref:refs/heads/main` and `repo:<owner>/<repo>:pull_request`. It needs, beyond `Contributor` on the subscription:
+The Entra application backing the federation carries four federated credentials, two subject formats for each of `:ref:refs/heads/main` and `:pull_request`:
+
+```text
+repo:<owner>/<repo>:...                        classic subject
+repo:<owner>@<org-id>/<repo>@<repo-id>:...     GitHub immutable-identifier subject
+```
+
+Both are registered on purpose. This organization currently issues immutable-identifier subjects, and a credential registered only in the classic format fails with `AADSTS700213: No matching federated identity record found`. Keeping both means renaming the organization or the repository does not break deployments, and neither does GitHub changing the default format.
+
+Beyond `Contributor` on the subscription the identity needs:
 
 | Role | Scope | Why |
 | --- | --- | --- |
