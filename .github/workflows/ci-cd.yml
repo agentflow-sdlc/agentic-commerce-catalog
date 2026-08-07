@@ -334,6 +334,11 @@ jobs:
           try {
             # Keep the existing foundation/workload switch; enable the workload and pin
             # the exact immutable images produced by build-images.
+            #
+            # These writes land in the runner's copy of Pulumi.dev.yaml and are discarded
+            # with the runner, so the committed file has to keep deployWorkload=true.
+            # Otherwise the next preview plans to delete the workload. See "Stack
+            # configuration is committed" in README.md.
             & $context.PulumiPath config set catalog:apiImage $env:API_IMAGE --non-interactive
             & $context.PulumiPath config set catalog:migratorImage $env:MIGRATOR_IMAGE --non-interactive
             & $context.PulumiPath config set catalog:deployWorkload true --non-interactive

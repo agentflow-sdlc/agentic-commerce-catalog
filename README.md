@@ -202,6 +202,14 @@ CI builds both images with the runner's Docker daemon and pushes them with an En
 
 Tags are immutable and locked after push. A re-run of the same run reuses the existing image instead of failing against the locked tag.
 
+### Stack configuration is committed
+
+`pulumi config set` writes to `infra/Catalog.Infrastructure/Pulumi.dev.yaml`, a file in the working tree — a DIY backend stores state, not configuration. A CI checkout is therefore whatever is committed, and anything the `deploy` job sets is discarded when the runner is destroyed.
+
+`catalog:deployWorkload` must consequently stay `true` in the committed file once the workload exists. If it were left `false`, the next `pulumi preview` would compute a plan that deletes the Container App and the migrator job, and the destruction guard would correctly fail every pull request.
+
+`catalog:apiImage` and `catalog:migratorImage` are committed for the same reason. **Known limitation:** `deploy` overrides them with the freshly built tag but does not commit the result, so after a deployment the committed references lag behind what is running and a pull request preview shows a benign image update. This is never destructive and the guard passes. To remove the lag, either have `deploy` commit the updated file back to `main`, or move image selection out of Pulumi configuration.
+
 ### Infrastructure safety
 
 Every `pulumi up` is preceded by `pulumi preview` through [`scripts/invoke-pulumi-preview.ps1`](scripts/invoke-pulumi-preview.ps1). The preview digest is stored as evidence and the job **fails before any update** when the plan would delete or replace Azure SQL, ACR, Key Vault, the managed identity, Log Analytics, Application Insights, the Container Apps environment, the container app, or the resource group. `pulumi destroy` is never invoked by the workflow. The guard has an offline self-check, [`scripts/tests/preview-guard-check.ps1`](scripts/tests/preview-guard-check.ps1), which runs as part of `validate`.
