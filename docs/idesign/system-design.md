@@ -71,7 +71,7 @@ GitHub main
   GitHub Actions --> validate --> infrastructure-preview --> build-images --> deploy
                           --> run-migrations --> smoke-tests --> publish-evidence
                                   |                 |               |
-      ACR <-- az acr build -------+                 |               +-- artifacts + run manifest
+      ACR <-- docker build/push --+                 |               +-- artifacts + run manifest
       Azure Container Apps <-- pulumi up            |
       Azure SQL <-- Container Apps migrator job ----+
 ```

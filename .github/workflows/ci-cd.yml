@@ -197,7 +197,8 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------------------
-  # 3. build-images — main only. Immutable tags via ACR Tasks (no Docker-in-Docker).
+  # 3. build-images — main only. Immutable tags, built on the runner because this
+  #    subscription refuses ACR Tasks (TasksOperationsNotAllowed).
   # -------------------------------------------------------------------------------
   build-images:
     name: Build Images
@@ -247,19 +248,40 @@ jobs:
 
           $tag = "${{ github.run_id }}-$('${{ github.sha }}'.Substring(0, 12))"
 
-          az acr build --registry $registry --image "catalog-api:$tag" `
-            --file Dockerfile --platform linux/amd64 .
-          if ($LASTEXITCODE -ne 0) { throw 'Catalog API ACR build failed.' }
+          # ACR Tasks (`az acr build`) is refused for this subscription with
+          # TasksOperationsNotAllowed, so the runner's own Docker daemon builds the images.
+          # Pushing uses an Entra token from the OIDC login: the registry keeps its admin
+          # user disabled and no registry credential exists anywhere.
+          az acr login --name $registry
+          if ($LASTEXITCODE -ne 0) { throw 'Could not authenticate to the container registry.' }
 
-          az acr build --registry $registry --image "catalog-database-migrator:$tag" `
-            --file src/Catalog.DatabaseMigrator/Dockerfile --platform linux/amd64 .
-          if ($LASTEXITCODE -ne 0) { throw 'Catalog Database Migrator ACR build failed.' }
+          $images = @(
+            @{ Repository = 'catalog-api';               Dockerfile = 'Dockerfile' }
+            @{ Repository = 'catalog-database-migrator'; Dockerfile = 'src/Catalog.DatabaseMigrator/Dockerfile' }
+          )
 
-          # Lock the tags so a later run can never repoint them to different content.
-          az acr repository update --name $registry --image "catalog-api:$tag" `
-            --write-enabled false --delete-enabled false --output none
-          az acr repository update --name $registry --image "catalog-database-migrator:$tag" `
-            --write-enabled false --delete-enabled false --output none
+          foreach ($image in $images) {
+            $reference = "$loginServer/$($image.Repository):$tag"
+
+            # Tags are locked after the first push, so re-running the same run must reuse
+            # the existing image instead of failing against an immutable tag.
+            az acr repository show --name $registry --image "$($image.Repository):$tag" --output none 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "$reference already exists and is immutable; reusing it."
+              continue
+            }
+
+            docker build --platform linux/amd64 --file $image.Dockerfile --tag $reference .
+            if ($LASTEXITCODE -ne 0) { throw "$($image.Repository) image build failed." }
+
+            docker push $reference
+            if ($LASTEXITCODE -ne 0) { throw "$($image.Repository) image push failed." }
+
+            # Lock the tag so a later run can never repoint it to different content.
+            az acr repository update --name $registry --image "$($image.Repository):$tag" `
+              --write-enabled false --delete-enabled false --output none
+            if ($LASTEXITCODE -ne 0) { throw "$($image.Repository) tag could not be made immutable." }
+          }
 
           "imageTag=$tag" | Add-Content $env:GITHUB_OUTPUT
           "apiImage=$loginServer/catalog-api:$tag" | Add-Content $env:GITHUB_OUTPUT
