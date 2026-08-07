@@ -73,17 +73,9 @@ internal sealed class CatalogFoundation : ComponentResource
                         ServiceName = "Microsoft.App/environments",
                     },
                 ],
-                // Carries the subnet's identity to Azure SQL so the server can admit this
-                // subnet specifically instead of every Azure tenant. Free, and unlike an
-                // outbound IP allowlist it survives Container Apps changing its egress
-                // addresses. Paired with the virtual network rule on the server below.
-                ServiceEndpoints =
-                [
-                    new NetworkInputs.ServiceEndpointPropertiesFormatArgs
-                    {
-                        Service = "Microsoft.Sql",
-                    },
-                ],
+                // No Microsoft.Sql service endpoint: it only has an effect alongside a
+                // virtual network rule on the server, which Azure refuses across regions
+                // while the server stays in centralus. See the firewall rule on the server.
             },
             childOptions);
 
@@ -237,24 +229,29 @@ internal sealed class CatalogFoundation : ComponentResource
 
         if (args.FreeFirst)
         {
-            // Admits only the subnet the Container Apps environment runs in. This replaces
-            // the 0.0.0.0-0.0.0.0 "allow Azure services" rule, which sounds narrow but
-            // admits every Azure tenant on the platform, leaving the admin password as the
-            // only barrier for anyone able to create a VM. A virtual network rule costs
-            // nothing, is not affected by Container Apps rotating its outbound addresses,
-            // and leaves the public endpoint unreachable from everywhere else.
+            // This rule admits every Azure tenant, not just this subscription, so the admin
+            // password is the only barrier for anyone able to create a VM. It stays because
+            // the narrower options are all blocked here, and the reason is worth recording:
             //
-            // Nothing reaches the database from outside this subnet: migrations run as a
-            // Container Apps Job inside it, and the smoke tests only call the API over
-            // HTTPS. Connecting from a workstation needs a temporary rule for that address.
-            _ = new VirtualNetworkRule(
-                "catalog-sql-allow-container-apps",
-                new VirtualNetworkRuleArgs
+            // A virtual network rule is the correct fix and was attempted. Azure rejects it
+            // outright - "Microsoft.Sql resources in centralus cannot be ACL-ed to virtual
+            // network ... in eastus2" - because such rules require the server and the
+            // network to share a region. The server sits in centralus (see the sqlLocation
+            // default in bootstrap-pulumi.ps1) while everything else is in eastus2.
+            //
+            // Closing this therefore costs something in every direction: a Private Endpoint
+            // is about $7/month, and colocating the server means recreating it and losing
+            // the database. Both are deliberate decisions, not cleanup, so neither is taken
+            // here. Production should restore the Private Endpoint.
+            _ = new FirewallRule(
+                "catalog-sql-allow-azure-services",
+                new FirewallRuleArgs
                 {
                     ResourceGroupName = ResourceGroup.Name,
                     ServerName = SqlServer.Name,
-                    VirtualNetworkRuleName = "allow-container-apps-subnet",
-                    VirtualNetworkSubnetId = ContainerAppsSubnet.Id,
+                    FirewallRuleName = "AllowAllWindowsAzureIps",
+                    StartIpAddress = "0.0.0.0",
+                    EndIpAddress = "0.0.0.0",
                 },
                 childOptions);
         }
