@@ -395,6 +395,12 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # `az containerapp` is an extension and is not preinstalled on the runner. Install it
+      # explicitly so the migration step fails on real migration problems rather than on a
+      # missing CLI extension or an interactive install prompt.
+      - name: Install the containerapp Azure CLI extension
+        run: az extension add --name containerapp --upgrade --only-show-errors
+
       - name: Execute the database migrator Container Apps Job
         id: migration
         shell: pwsh
