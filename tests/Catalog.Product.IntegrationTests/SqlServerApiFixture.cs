@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.MsSql;
 
@@ -12,9 +11,16 @@ namespace Catalog.Product.IntegrationTests;
 
 public sealed class SqlServerApiFixture : IAsyncLifetime
 {
+    // Program reads ConnectionStrings:CatalogDb while building the WebApplicationBuilder,
+    // which is earlier than the configuration sources WebApplicationFactory contributes.
+    // The environment variable is the documented way to supply it and is read by
+    // WebApplication.CreateBuilder itself, so it is in place before Program runs.
+    private const string ConnectionStringVariable = "ConnectionStrings__CatalogDb";
+
     private readonly MsSqlContainer _container = new MsSqlBuilder(
         "mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").Build();
     private WebApplicationFactory<Program>? _factory;
+    private string? _previousConnectionString;
 
     public HttpClient Client { get; private set; } = null!;
 
@@ -25,16 +31,13 @@ public sealed class SqlServerApiFixture : IAsyncLifetime
     {
         await _container.StartAsync();
 
+        _previousConnectionString = Environment.GetEnvironmentVariable(ConnectionStringVariable);
+        Environment.SetEnvironmentVariable(
+            ConnectionStringVariable,
+            _container.GetConnectionString());
+
         _factory = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
-            {
-                builder.UseEnvironment("IntegrationTests");
-                builder.ConfigureAppConfiguration((_, configuration) =>
-                    configuration.AddInMemoryCollection(new Dictionary<string, string?>
-                    {
-                        ["ConnectionStrings:CatalogDb"] = _container.GetConnectionString(),
-                    }));
-            });
+            .WithWebHostBuilder(builder => builder.UseEnvironment("IntegrationTests"));
 
         using var scope = Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
@@ -69,5 +72,6 @@ public sealed class SqlServerApiFixture : IAsyncLifetime
         }
 
         await _container.DisposeAsync();
+        Environment.SetEnvironmentVariable(ConnectionStringVariable, _previousConnectionString);
     }
 }
