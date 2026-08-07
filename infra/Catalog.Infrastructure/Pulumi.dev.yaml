@@ -6,5 +6,7 @@ config:
   catalog:sqlDatabaseSku: Basic
   catalog:sqlAdminPassword:
     secure: v1:n/kPY8ODlgVMHT6z:qf29fEgyplgzTsRJStwKOkBv4UIyPO01d9rDJsR1tXxa45HtHcg6/a1aAZ8fSsOWngPXCcjThK9R6GR1DN644Q==
-  catalog:deployWorkload: "false"
+  catalog:deployWorkload: "true"
   catalog:sqlLocation: centralus
+  catalog:apiImage: agenticcatalog654964.azurecr.io/catalog-api:31196570338-3be933568b9d
+  catalog:migratorImage: agenticcatalog654964.azurecr.io/catalog-database-migrator:31196570338-3be933568b9d
