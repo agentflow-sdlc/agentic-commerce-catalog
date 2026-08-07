@@ -164,6 +164,45 @@ deployment:
     - GET /products
     - GET /categories
 
+cicd:
+  sourceControl: github
+  orchestrator: azure-pipelines
+  githubActions: none
+  definition: azure-pipelines.yml
+  azureAuthentication: workload-identity-federation
+  flows:
+    pullRequest:
+      description: GitHub pull request into main triggers Azure Pipelines validation only.
+      path:
+        - github-pull-request
+        - azure-pipelines
+        - validate
+        - pulumi-preview
+        - evidence
+      deploys: false
+    main:
+      description: GitHub commit on main triggers the full Azure deployment.
+      path:
+        - github-main
+        - azure-pipelines
+        - validate
+        - pulumi-preview
+        - build-images
+        - azure-container-registry
+        - pulumi-up
+        - azure-container-apps
+        - database-migration-job
+        - smoke-tests
+        - evidence
+      deploys: true
+  safeguards:
+    previewBeforeEveryUpdate: true
+    failOnProtectedResourceDestruction: true
+    destroyProhibited: true
+    immutableImageTags: true
+    latestTagProhibited: true
+    apiRunsMigrationsAtStartup: false
+
 runtimeAbstractions:
   time: System.TimeProvider
   productIds: Catalog.Managers.Products.IProductIdGenerator

@@ -91,16 +91,25 @@ Development defaults favor low cost:
 
 Resources that may incur cost without user traffic include Azure SQL, ACR storage/builds, Private Endpoint, Log Analytics/Application Insights ingestion and retention, Key Vault operations, and Container Apps environment/network consumption. Exact prices vary by subscription and region.
 
-## Future Azure DevOps configuration
+## Azure DevOps configuration
 
-`azure-pipelines.yml` is disabled for deployment by default. Before enabling it, configure:
+`azure-pipelines.yml` runs this same flow automatically from GitHub. The Azure DevOps side is configured in organization `emma-agent-test`, project `agentic-sdlc`:
 
-- An Azure Resource Manager service connection with access to the active dev subscription and backend RBAC.
-- Secret pipeline variables `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
-- Optional protected Azure DevOps Environment approvals for dev deployment stages.
-- Artifact retention suitable for smoke evidence.
+- Pipeline `agentic-commerce-catalog`, sourced from the GitHub repository through service connection `sc-catalog-github`.
+- Azure Resource Manager service connection `sc-catalog-azure-dev`, using **Workload Identity Federation** — no client secret.
+- Variable group `catalog-dev`, holding `PULUMI_BACKEND_URL`, `PULUMI_STACK`, `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `CATALOG_SQL_ADMIN_LOGIN` plus the secret variables `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
 
-No service connection, variable group, Environment, or pipeline is created by this repository execution.
+The federated identity needs, beyond `Contributor` on the subscription:
+
+| Role | Scope | Why |
+| --- | --- | --- |
+| `Storage Blob Data Contributor` | the Pulumi state Storage Account | Read and write the `azblob` backend |
+| `Role Based Access Control Administrator` | the Catalog resource group | `CatalogWorkload` creates the `AcrPull`, `Key Vault Secrets User`, and `Monitoring Metrics Publisher` assignments |
+| `Key Vault Secrets Officer` | the Catalog Key Vault | Manage the `catalog-db` secret |
+
+Pull requests execute `Validate` and `InfrastructurePreview` only. Deployment stages are gated on the build not being a pull request and the branch being `main`.
+
+`scripts/invoke-pulumi-preview.ps1` runs before every update and fails the stage when the plan would delete or replace protected infrastructure, so the destroy safety rule above is enforced mechanically and not only by convention.
 
 ## Out of scope
 

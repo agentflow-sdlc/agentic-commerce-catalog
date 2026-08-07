@@ -54,6 +54,34 @@ API --managed identity/Metrics Publisher--> Application Insights --> Log Analyti
 
 The SQL server rejects public network traffic. The API never applies migrations. The migration job shares the private network and secure references, runs to completion, and exposes no ingress.
 
+## Delivery topology
+
+GitHub owns the code and the review gate; Azure Pipelines owns execution and evidence. Azure DevOps is connected directly to the GitHub repository — there is no GitHub Actions workflow acting as an intermediary and no second deployment pipeline.
+
+```text
+GitHub Pull Request -> main
+  Azure Pipelines --> Validate --> InfrastructurePreview --> PublishEvidence
+                        |                |
+                        |                +-- pulumi preview (read-only, existing dev stack)
+                        +-- build, unit/API/architecture/integration tests,
+                            OpenAPI validation, EF model check, format
+  No image build. No pulumi up. No Azure mutation.
+
+GitHub main
+  Azure Pipelines --> Validate --> InfrastructurePreview --> BuildImages --> Deploy
+                          --> RunMigrations --> SmokeTests --> PublishEvidence
+                                  |                 |               |
+      ACR <-- az acr build -------+                 |               +-- artifacts + run manifest
+      Azure Container Apps <-- pulumi up            |
+      Azure SQL <-- Container Apps migrator job ----+
+```
+
+The two flows share one definition. Deployment stages are gated on the build not being a pull request and the source branch being `refs/heads/main`, so review happens in GitHub while mutation happens only after integration.
+
+Every `pulumi up` is preceded by a `pulumi preview` whose digest is retained as evidence and inspected for destructive operations. A plan that would delete or replace Azure SQL, ACR, Key Vault, the managed identity, Log Analytics, Application Insights, the Container Apps environment, the container app, or the resource group fails the stage before the update runs. The pipeline never calls `pulumi destroy`, reuses the existing backend and `dev` stack, and keeps the existing passphrase secrets provider, so repeated runs converge rather than duplicate.
+
+Images carry immutable `<build-id>-<short-sha>` tags and the ACR tags are locked after the build; `latest` is never deployed. Azure access uses a Workload Identity Federation service connection, so no client secret, PAT, or storage key exists in the delivery path.
+
 ## Error and observability decision
 
 Managers translate controlled domain failures into stable HTTP errors, and global middleware maps unexpected failures to a safe correlated 500. Structured logs exclude request bodies, SQL values, secrets, and provider details. Azure Monitor registration is conditional, so the API still starts locally when Application Insights is absent.

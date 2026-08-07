@@ -152,9 +152,54 @@ SQL authentication is a temporary MVP exception. The password exists only in enc
 
 See [`infra/Catalog.Infrastructure/README.md`](infra/Catalog.Infrastructure/README.md) for rollback, security, cost, backend, and Azure DevOps setup details.
 
-## Azure Pipeline
+## CI/CD
 
-`azure-pipelines.yml` defines the future gated sequence: Validate, Provision Foundation, Build Images, Deploy Workload, Run Migrations, Smoke Tests, and Publish Evidence. Pull requests execute validation only. Azure deployment remains disabled by default until the documented service connection and secret pipeline variables are configured.
+GitHub is the only source of truth for code; Azure Pipelines executes the SDLC and stores the evidence. Azure DevOps is connected **directly** to the GitHub repository. This repository contains no GitHub Actions workflow, and none is planned — `azure-pipelines.yml` is the single CI/CD definition.
+
+| | |
+| --- | --- |
+| Azure DevOps organization | `emma-agent-test` |
+| Azure DevOps project | `agentic-sdlc` |
+| Pipeline | `agentic-commerce-catalog` |
+| GitHub service connection | `sc-catalog-github` |
+| Azure service connection | `sc-catalog-azure-dev` (Workload Identity Federation) |
+| Variable group | `catalog-dev` |
+
+### Pull request into `main` — validation only, never deploys
+
+```text
+GitHub Pull Request -> Azure Pipelines
+  Validate               restore, build, unit/API/architecture/integration tests,
+                         OpenAPI validation, EF migration model, dotnet format
+  InfrastructurePreview  pulumi preview against the existing dev stack
+  PublishEvidence        test results + preview digest as artifacts
+```
+
+The deployment stages are gated on `Build.Reason != PullRequest` **and** `Build.SourceBranch == refs/heads/main`, so a pull request can never build images, run `pulumi up`, migrate the database, or touch Azure.
+
+### Commit on `main` — full deployment
+
+```text
+GitHub main -> Azure Pipelines
+  Validate               identical quality gates
+  InfrastructurePreview  pulumi preview against the existing dev stack
+  BuildImages            az acr build -> catalog-api and catalog-database-migrator,
+                         immutable tag <build-id>-<short-sha>, never `latest`
+  Deploy                 pulumi preview (destruction gate) -> pulumi up --yes
+  RunMigrations          start the Container Apps migrator job and await its result
+  SmokeTests             GET /health, /products, /categories
+  PublishEvidence        consolidated artifacts + run manifest
+```
+
+### Infrastructure safety
+
+Every `pulumi up` is preceded by `pulumi preview` through [`scripts/invoke-pulumi-preview.ps1`](scripts/invoke-pulumi-preview.ps1). The preview digest is stored as evidence and the stage **fails before any update** when the plan would delete or replace Azure SQL, ACR, Key Vault, the managed identity, Log Analytics, Application Insights, the Container Apps environment, the container app, or the resource group. `pulumi destroy` is never invoked by the pipeline. The guard has an offline self-check, [`scripts/tests/preview-guard-check.ps1`](scripts/tests/preview-guard-check.ps1), which runs as part of Validate.
+
+The pipeline reuses the existing backend, the existing `dev` stack, and the existing passphrase secrets provider. It creates no second registry, database, vault, or container app, so repeated runs on the same commit converge on the same resources.
+
+### Secrets
+
+`PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD` exist only as **secret** variables in the `catalog-dev` variable group. They are referenced by name in `azure-pipelines.yml` and never written to the repository, the pipeline logs, the artifacts, or the run manifest. Azure authentication uses Workload Identity Federation — there is no client secret, no PAT, and no storage account key in the deployment path.
 
 ## Current limitations
 
@@ -164,6 +209,7 @@ Product and Category parity plus the Azure dev deployment are implemented. Produ
 
 ```text
 .agentic/                                   Machine-readable architecture and quality metadata
+.azuredevops/templates/                     Reusable Azure Pipelines step templates
 .config/dotnet-tools.json                   Pinned dotnet-ef tool
 src/Catalog.Contracts/                      Public HTTP contracts
 src/Catalog.Api/                            ASP.NET Core endpoints and middleware
@@ -174,11 +220,12 @@ src/Catalog.Accessors/Migrations/            Incremental EF Core migrations
 src/Catalog.DatabaseMigrator/                Non-HTTP migration executable and image
 infra/Catalog.Infrastructure/                Pulumi Azure Native dev infrastructure
 scripts/                                     Idempotent deployment and verification scripts
+scripts/tests/                               Offline self-checks for the deployment scripts
 tests/                                       Unit, API, SQL integration, and architecture tests
 openapi/                                     Provider-neutral HTTP contract
 docs/idesign/                                Implemented IDesign evidence
 docs/migration/                              Historical migration evidence
-azure-pipelines.yml                          Validation and gated Azure deployment pipeline
+azure-pipelines.yml                          The only CI/CD definition (Azure Pipelines)
 ```
 
 ## Previous baseline

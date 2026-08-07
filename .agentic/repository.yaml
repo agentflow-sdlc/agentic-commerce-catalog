@@ -26,6 +26,54 @@ sourceControl:
 ciCd:
   system: azure-pipelines
   definition: azure-pipelines.yml
+  # GitHub triggers Azure Pipelines directly. There is no GitHub Actions workflow in this
+  # repository and no second deployment pipeline.
+  githubActions: none
+  organization: emma-agent-test
+  project: agentic-sdlc
+  pipeline: agentic-commerce-catalog
+  sourceProvider: github
+  githubServiceConnection: sc-catalog-github
+  azureServiceConnection: sc-catalog-azure-dev
+  azureAuthentication: workload-identity-federation
+  variableGroup: catalog-dev
+  stages:
+    - Validate
+    - InfrastructurePreview
+    - BuildImages
+    - Deploy
+    - RunMigrations
+    - SmokeTests
+    - PublishEvidence
+  triggers:
+    pullRequest:
+      target: main
+      stages:
+        - Validate
+        - InfrastructurePreview
+        - PublishEvidence
+      deploys: false
+    main:
+      target: main
+      stages:
+        - Validate
+        - InfrastructurePreview
+        - BuildImages
+        - Deploy
+        - RunMigrations
+        - SmokeTests
+        - PublishEvidence
+      deploys: true
+  imageTagging:
+    strategy: immutable
+    format: <build-id>-<short-sha>
+    latestTagProhibited: true
+  secrets:
+    storage: azure-devops-variable-group
+    names:
+      - PULUMI_CONFIG_PASSPHRASE
+      - CATALOG_SQL_ADMIN_PASSWORD
+    committed: false
 
 services:
   - SERVICE-CATALOG-API
