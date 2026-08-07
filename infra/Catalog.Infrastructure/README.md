@@ -44,7 +44,7 @@ The backend is bootstrap infrastructure external to the Catalog stack:
 
 1. Local validation and Pulumi C# compilation.
 2. Foundation preview and update with workloads disabled on a new stack.
-3. ACR Tasks builds for the API and migrator; Docker is not required locally.
+3. ACR Tasks builds for the API and migrator; Docker is not required locally. **This subscription currently refuses ACR Tasks (`TasksOperationsNotAllowed`)**, so this step fails until an Azure support request lifts it. CI does not depend on it: `.github/workflows/ci-cd.yml` builds with the runner's Docker daemon and pushes with an Entra token.
 4. Immutable tags based on commit SHA and UTC build timestamp.
 5. Workload preview and update with exact image references.
 6. Migration job start and completion check.

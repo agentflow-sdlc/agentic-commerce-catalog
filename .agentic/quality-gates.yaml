@@ -50,7 +50,14 @@ gates:
       - azure-native:resources:ResourceGroup
   container-builds:
     command: pwsh ./scripts/deploy-dev.ps1
-    provider: azure-container-registry-tasks
+    # ACR Tasks is refused for this subscription (TasksOperationsNotAllowed), so CI builds
+    # with the runner's Docker daemon and pushes with an Entra token. The local script
+    # still uses `az acr build`; it will need the same treatment if Tasks stays blocked.
+    provider: docker-build-and-push
+    ciProvider: docker-build-and-push
+    localScriptProvider: azure-container-registry-tasks
+    registryAdminUser: disabled
+    registryCredential: entra-token
     localDockerRequired: false
   database-migration-job:
     command: pwsh ./scripts/run-migrations-dev.ps1

@@ -140,6 +140,8 @@ pwsh ./scripts/deploy-dev.ps1
 
 The script validates the repository, provisions the foundation, builds immutable commit-based API and migrator images through ACR Tasks, deploys the workloads, runs the migration job, and verifies `/health`, `/products`, and `/categories`. Smoke evidence is written to `artifacts/deployment/dev/<commit-sha>/` and ignored by Git.
 
+Its ACR Tasks step currently fails on this subscription (`TasksOperationsNotAllowed`); see [Container image builds](#container-image-builds). CI is unaffected.
+
 ```text
 GitHub -> Pulumi C# -> ACR -> Azure Container Apps -> Catalog API -> Azure SQL
                                 |                       |
@@ -182,7 +184,7 @@ The deployment jobs are gated on `github.event_name != 'pull_request'` **and** `
 GitHub main -> GitHub Actions
   validate                identical quality gates
   infrastructure-preview  pulumi preview against the existing dev stack
-  build-images            az acr build -> catalog-api and catalog-database-migrator,
+  build-images            docker build + push -> catalog-api and catalog-database-migrator,
                           immutable tag <run-id>-<short-sha>, never `latest`
   deploy                  pulumi preview (destruction gate) -> pulumi up --yes
   run-migrations          start the Container Apps migrator job and await its result
@@ -191,6 +193,14 @@ GitHub main -> GitHub Actions
 ```
 
 A `concurrency` group keeps two runs from mutating the shared `dev` stack at once: pull request runs supersede each other, while `main` deployments queue.
+
+### Container image builds
+
+CI builds both images with the runner's Docker daemon and pushes them with an Entra token obtained from the OIDC login. The registry keeps its admin user disabled, so no registry username, password or key exists anywhere.
+
+`az acr build` (ACR Tasks) is **not** used, because this subscription refuses ACR Tasks requests with `TasksOperationsNotAllowed`. Lifting that requires an Azure support request; until then, building on the runner is the working path. `scripts/deploy-dev.ps1` still calls `az acr build` and will hit the same wall if run locally.
+
+Tags are immutable and locked after push. A re-run of the same run reuses the existing image instead of failing against the locked tag.
 
 ### Infrastructure safety
 
