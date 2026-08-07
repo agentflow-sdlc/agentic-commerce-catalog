@@ -1,0 +1,24 @@
+# Prepares an agent to talk to the EXISTING Pulumi Azure Blob backend.
+#
+# It installs the pinned Pulumi CLI and the SDK from global.json (the infrastructure
+# project is Pulumi C#, so `pulumi preview`/`pulumi up` compile it on the agent).
+#
+# It deliberately does NOT log in or select a stack: scripts/bootstrap-pulumi.ps1 does that
+# from inside an AzureCLI@2 task, where the Workload Identity Federation login is active.
+
+parameters:
+  - name: pulumiVersion
+    type: string
+
+steps:
+  - task: UseDotNet@2
+    displayName: Install .NET SDK from global.json
+    inputs:
+      packageType: sdk
+      useGlobalJson: true
+
+  - bash: |
+      set -euo pipefail
+      curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
+      echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+    displayName: Install pinned Pulumi CLI ${{ parameters.pulumiVersion }}

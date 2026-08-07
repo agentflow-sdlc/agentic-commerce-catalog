@@ -1,3 +1,20 @@
+# Catalog CI/CD — GitHub is the source of truth, Azure Pipelines executes the SDLC.
+#
+#   GitHub Pull Request -> main
+#     Validate -> InfrastructurePreview -> PublishEvidence           (never deploys)
+#
+#   GitHub commit on main
+#     Validate -> InfrastructurePreview -> BuildImages -> Deploy
+#     -> RunMigrations -> SmokeTests -> PublishEvidence
+#
+# There is no GitHub Actions workflow in this repository; this file is the only CI/CD
+# definition. Azure DevOps is connected directly to the GitHub repository.
+#
+# Secrets (PULUMI_CONFIG_PASSPHRASE, CATALOG_SQL_ADMIN_PASSWORD) live only as secret
+# variables in the `catalog-dev` variable group and are referenced, never written, here.
+
+name: $(Build.SourceBranchName)-$(Build.BuildId)
+
 trigger:
   branches:
     include:
@@ -8,129 +25,186 @@ pr:
     include:
       - main
 
-parameters:
-  - name: deployDev
-    displayName: Deploy the Azure dev environment after validation
-    type: boolean
-    default: false
-  - name: azureServiceConnection
-    displayName: Azure Resource Manager service connection
-    type: string
-    default: CONFIGURE_ME
-  - name: pulumiVersion
-    type: string
-    default: 3.255.0
-
 variables:
-  buildConfiguration: Release
-  testResultsDirectory: $(Build.ArtifactStagingDirectory)/test-results
+  # Supplies PULUMI_BACKEND_URL, PULUMI_STACK, AZURE_SUBSCRIPTION_ID, AZURE_LOCATION,
+  # CATALOG_SQL_ADMIN_LOGIN and the two secret variables above.
+  - group: catalog-dev
+
+  - name: azureServiceConnection
+    value: sc-catalog-azure-dev
+  - name: buildConfiguration
+    value: Release
+  - name: pulumiVersion
+    value: 3.255.0
+  - name: evidenceDirectory
+    value: $(Build.ArtifactStagingDirectory)/evidence
+
+  # Deployment stages run only for integrated commits on main. A pull request build has
+  # Build.Reason=PullRequest and must stop after the read-only infrastructure preview.
+  - name: isDeployment
+    value: $[ and(ne(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.SourceBranch'], 'refs/heads/main')) ]
 
 stages:
+  # ---------------------------------------------------------------------------------
+  # 1. Validate — every quality gate, identical for pull requests and for main.
+  # ---------------------------------------------------------------------------------
   - stage: Validate
     displayName: Validate
     jobs:
       - job: ValidateCatalog
+        displayName: Build, test and lint
         pool:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
             clean: true
             fetchDepth: 0
+
           - task: UseDotNet@2
             displayName: Install .NET SDK from global.json
             inputs:
               packageType: sdk
               useGlobalJson: true
+
+          - script: mkdir -p "$(evidenceDirectory)"
+            displayName: Prepare evidence directory
+
           - script: dotnet tool restore
             displayName: Restore repository tools
-          - script: mkdir -p "$(testResultsDirectory)"
-            displayName: Prepare evidence directory
+
           - script: dotnet restore Catalog.sln
-            displayName: Restore application packages
+            displayName: dotnet restore
+
           - script: dotnet build Catalog.sln --configuration $(buildConfiguration) --no-restore
-            displayName: Build application solution
+            displayName: dotnet build
+
           - script: >-
-              dotnet test Catalog.sln
-              --configuration $(buildConfiguration)
-              --no-build
-              --logger "trx;LogFileName=Catalog.Tests.trx"
-              --results-directory "$(testResultsDirectory)"
-            displayName: Run unit, API, OpenAPI, and architecture tests
+              dotnet test tests/Catalog.Product.Tests/Catalog.Product.Tests.csproj
+              --configuration $(buildConfiguration) --no-build
+              --logger "trx;LogFileName=Catalog.UnitTests.trx"
+              --results-directory "$(evidenceDirectory)/test-results"
+            displayName: Unit tests
+
+          - script: >-
+              dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
+              --configuration $(buildConfiguration) --no-build
+              --logger "trx;LogFileName=Catalog.ApiTests.trx"
+              --results-directory "$(evidenceDirectory)/test-results"
+            displayName: API tests
+
+          - script: >-
+              dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj
+              --configuration $(buildConfiguration) --no-build
+              --logger "trx;LogFileName=Catalog.ArchitectureTests.trx"
+              --results-directory "$(evidenceDirectory)/test-results"
+            displayName: Architecture tests (IDesign dependency rules)
+
+          - script: >-
+              dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
+              --configuration $(buildConfiguration) --no-build
+              --filter Category=OpenApi
+              --logger "trx;LogFileName=Catalog.OpenApiValidation.trx"
+              --results-directory "$(evidenceDirectory)/test-results"
+            displayName: OpenAPI contract validation
+
           - script: docker version
             displayName: Verify Docker for SQL integration tests
+
           - script: >-
               dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj
-              --configuration $(buildConfiguration)
-              --no-build
-              --logger "trx;LogFileName=Catalog.Sql.IntegrationTests.trx"
-              --results-directory "$(testResultsDirectory)"
-            displayName: Run isolated SQL Server integration tests
+              --configuration $(buildConfiguration) --no-build
+              --logger "trx;LogFileName=Catalog.IntegrationTests.trx"
+              --results-directory "$(evidenceDirectory)/test-results"
+            displayName: Integration tests (isolated SQL Server)
             env:
               RUN_SQL_SERVER_TESTS: "true"
+
           - script: >-
               dotnet ef migrations has-pending-model-changes
               --project src/Catalog.Accessors/Catalog.Accessors.csproj
               --startup-project src/Catalog.Api/Catalog.Api.csproj
-              --configuration $(buildConfiguration)
-              --no-build
+              --configuration $(buildConfiguration) --no-build
             displayName: Validate EF Core migration model
+
           - script: >-
               dotnet ef migrations script --idempotent
               --project src/Catalog.Accessors/Catalog.Accessors.csproj
               --startup-project src/Catalog.Api/Catalog.Api.csproj
-              --configuration $(buildConfiguration)
-              --no-build
-              --output "$(testResultsDirectory)/Catalog.Migrations.sql"
+              --configuration $(buildConfiguration) --no-build
+              --output "$(evidenceDirectory)/Catalog.Migrations.sql"
             displayName: Generate idempotent migration evidence
+
           - script: dotnet format Catalog.sln --verify-no-changes --no-restore
-            displayName: Verify formatting
+            displayName: dotnet format --verify-no-changes
+
+          - script: pwsh ./scripts/tests/preview-guard-check.ps1
+            displayName: Verify Pulumi destruction guard
+
           - script: dotnet restore infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
             displayName: Restore Pulumi C# packages
-          - script: dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration $(buildConfiguration) --no-restore
+
+          - script: >-
+              dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
+              --configuration $(buildConfiguration) --no-restore
             displayName: Build Pulumi C# project
+
           - task: PublishTestResults@2
             displayName: Publish test results
             condition: succeededOrFailed()
             inputs:
               testResultsFormat: VSTest
-              testResultsFiles: "$(testResultsDirectory)/**/*.trx"
+              testResultsFiles: "$(evidenceDirectory)/test-results/**/*.trx"
               failTaskOnFailedTests: true
-              failTaskOnMissingResultsFile: false
+              failTaskOnMissingResultsFile: true
               testRunTitle: Catalog validation
 
-  - stage: ProvisionFoundation
-    displayName: Provision Foundation
+          - task: PublishPipelineArtifact@1
+            displayName: Publish validation evidence
+            condition: succeededOrFailed()
+            inputs:
+              targetPath: $(evidenceDirectory)
+              artifact: evidence-validate
+              publishLocation: pipeline
+
+  # ---------------------------------------------------------------------------------
+  # 2. InfrastructurePreview — read-only. Runs for pull requests AND for main.
+  #    Never calls `pulumi up`; fails if protected infrastructure would be destroyed.
+  # ---------------------------------------------------------------------------------
+  - stage: InfrastructurePreview
+    displayName: Infrastructure Preview
     dependsOn: Validate
-    condition: and(succeeded(), eq(${{ parameters.deployDev }}, true), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    condition: succeeded()
     jobs:
-      - job: Provision
+      - job: Preview
+        displayName: pulumi preview (existing dev stack)
         pool:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
             clean: true
-          - bash: |
-              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
-              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
-            displayName: Install pinned Pulumi CLI
+
+          - template: .azuredevops/templates/pulumi-setup.yml
+            parameters:
+              pulumiVersion: $(pulumiVersion)
+
           - task: AzureCLI@2
-            displayName: Preview and provision foundation
+            displayName: Preview the existing dev stack
             inputs:
-              azureSubscription: ${{ parameters.azureServiceConnection }}
+              azureSubscription: $(azureServiceConnection)
               scriptType: pscore
               scriptLocation: inlineScript
               inlineScript: |
+                # bootstrap-pulumi.ps1 discovers the existing Azure Blob backend, logs in and
+                # selects the existing `dev` stack. It never initialises a new stack when one
+                # exists and never changes the passphrase secrets provider.
                 $context = & ./scripts/bootstrap-pulumi.ps1 -PassThru
+                $guard = (Resolve-Path ./scripts/invoke-pulumi-preview.ps1).Path
+                $evidence = Join-Path '$(evidenceDirectory)' 'pulumi-preview.json'
                 Push-Location ./infra/Catalog.Infrastructure
                 try {
-                  $workloadEnabled = (& $context.PulumiPath config get catalog:deployWorkload 2>$null) -eq 'true'
-                  if (-not $workloadEnabled) {
-                    & $context.PulumiPath config set catalog:deployWorkload false --non-interactive
-                  }
-                  & $context.PulumiPath preview --non-interactive --diff
-                  if ($LASTEXITCODE -ne 0) { throw 'Foundation preview failed.' }
-                  & $context.PulumiPath up --yes --non-interactive
-                  if ($LASTEXITCODE -ne 0) { throw 'Foundation deployment failed.' }
+                  # Preview only. No `pulumi up`, no `pulumi destroy`, no config changes
+                  # beyond the existing values bootstrap-pulumi.ps1 already reconciles.
+                  & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence -Label 'infrastructure-preview'
                 }
                 finally {
                   Pop-Location
@@ -139,168 +213,329 @@ stages:
               PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
               CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
+          - task: PublishPipelineArtifact@1
+            displayName: Publish preview evidence
+            condition: succeededOrFailed()
+            inputs:
+              targetPath: $(evidenceDirectory)
+              artifact: evidence-infrastructure-preview
+              publishLocation: pipeline
+
+  # ---------------------------------------------------------------------------------
+  # 3. BuildImages — main only. Immutable tags via ACR Tasks (no Docker-in-Docker).
+  # ---------------------------------------------------------------------------------
   - stage: BuildImages
     displayName: Build Images
-    dependsOn: ProvisionFoundation
-    condition: succeeded()
+    dependsOn: InfrastructurePreview
+    condition: and(succeeded(), eq(variables.isDeployment, 'true'))
     jobs:
       - job: Build
+        displayName: az acr build
         pool:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
             clean: true
-          - bash: |
-              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
-              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
-            displayName: Install pinned Pulumi CLI
+
+          - template: .azuredevops/templates/pulumi-setup.yml
+            parameters:
+              pulumiVersion: $(pulumiVersion)
+
           - task: AzureCLI@2
-            name: BuildImageReferences
+            name: images
             displayName: Build and lock immutable ACR images
             inputs:
-              azureSubscription: ${{ parameters.azureServiceConnection }}
+              azureSubscription: $(azureServiceConnection)
               scriptType: pscore
               scriptLocation: inlineScript
               inlineScript: |
                 $context = & ./scripts/bootstrap-pulumi.ps1 -PassThru
                 Push-Location ./infra/Catalog.Infrastructure
                 try {
+                  # Registry coordinates come from Pulumi stack outputs, never hardcoded.
                   $registry = & $context.PulumiPath stack output containerRegistryName
-                  $server = & $context.PulumiPath stack output containerRegistryLoginServer
+                  $loginServer = & $context.PulumiPath stack output containerRegistryLoginServer
                 }
                 finally {
                   Pop-Location
                 }
-                $tag = "$(Build.SourceVersion)".Substring(0, 12) + "-$(Build.BuildId)"
-                az acr build --registry $registry --image "catalog-api:$tag" --file Dockerfile --platform linux/amd64 .
-                if ($LASTEXITCODE -ne 0) { throw 'API image build failed.' }
-                az acr build --registry $registry --image "catalog-database-migrator:$tag" --file src/Catalog.DatabaseMigrator/Dockerfile --platform linux/amd64 .
-                if ($LASTEXITCODE -ne 0) { throw 'Migrator image build failed.' }
-                az acr repository update --name $registry --image "catalog-api:$tag" --write-enabled false --delete-enabled false --output none
-                az acr repository update --name $registry --image "catalog-database-migrator:$tag" --write-enabled false --delete-enabled false --output none
-                Write-Host "##vso[task.setvariable variable=apiImage;isOutput=true]$server/catalog-api:$tag"
-                Write-Host "##vso[task.setvariable variable=migratorImage;isOutput=true]$server/catalog-database-migrator:$tag"
+
+                $shortSha = '$(Build.SourceVersion)'.Substring(0, 12)
+                $tag = '$(Build.BuildId)-' + $shortSha
+
+                az acr build --registry $registry --image "catalog-api:$tag" `
+                  --file Dockerfile --platform linux/amd64 .
+                if ($LASTEXITCODE -ne 0) { throw 'Catalog API ACR build failed.' }
+
+                az acr build --registry $registry --image "catalog-database-migrator:$tag" `
+                  --file src/Catalog.DatabaseMigrator/Dockerfile --platform linux/amd64 .
+                if ($LASTEXITCODE -ne 0) { throw 'Catalog Database Migrator ACR build failed.' }
+
+                # Lock the tags so a later run can never repoint them to different content.
+                az acr repository update --name $registry --image "catalog-api:$tag" `
+                  --write-enabled false --delete-enabled false --output none
+                az acr repository update --name $registry --image "catalog-database-migrator:$tag" `
+                  --write-enabled false --delete-enabled false --output none
+
+                $apiImage = "$loginServer/catalog-api:$tag"
+                $migratorImage = "$loginServer/catalog-database-migrator:$tag"
+                Write-Host "API image      : $apiImage"
+                Write-Host "Migrator image : $migratorImage"
+                Write-Host "##vso[task.setvariable variable=registryName;isOutput=true]$registry"
+                Write-Host "##vso[task.setvariable variable=loginServer;isOutput=true]$loginServer"
+                Write-Host "##vso[task.setvariable variable=imageTag;isOutput=true]$tag"
+                Write-Host "##vso[task.setvariable variable=apiImage;isOutput=true]$apiImage"
+                Write-Host "##vso[task.setvariable variable=migratorImage;isOutput=true]$migratorImage"
             env:
               PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
               CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
-  - stage: DeployWorkload
-    displayName: Deploy Workload
+  # ---------------------------------------------------------------------------------
+  # 4. Deploy — main only. Updates the EXISTING stack; creates nothing in parallel.
+  # ---------------------------------------------------------------------------------
+  - stage: Deploy
+    displayName: Deploy
     dependsOn: BuildImages
-    condition: succeeded()
+    condition: and(succeeded(), eq(variables.isDeployment, 'true'))
     variables:
-      apiImage: $[ stageDependencies.BuildImages.Build.outputs['BuildImageReferences.apiImage'] ]
-      migratorImage: $[ stageDependencies.BuildImages.Build.outputs['BuildImageReferences.migratorImage'] ]
+      apiImage: $[ stageDependencies.BuildImages.Build.outputs['images.apiImage'] ]
+      migratorImage: $[ stageDependencies.BuildImages.Build.outputs['images.migratorImage'] ]
     jobs:
-      - job: Deploy
+      - job: DeployWorkload
+        displayName: pulumi up (existing dev stack)
         pool:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
             clean: true
-          - bash: |
-              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
-              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
-            displayName: Install pinned Pulumi CLI
+
+          - template: .azuredevops/templates/pulumi-setup.yml
+            parameters:
+              pulumiVersion: $(pulumiVersion)
+
           - task: AzureCLI@2
-            displayName: Preview and deploy workloads
+            displayName: Preview, verify, then update the existing stack
             inputs:
-              azureSubscription: ${{ parameters.azureServiceConnection }}
+              azureSubscription: $(azureServiceConnection)
               scriptType: pscore
               scriptLocation: inlineScript
               inlineScript: |
                 $context = & ./scripts/bootstrap-pulumi.ps1 -PassThru
+                $guard = (Resolve-Path ./scripts/invoke-pulumi-preview.ps1).Path
+                $evidence = Join-Path '$(evidenceDirectory)' 'pulumi-preview-deploy.json'
+                $summaryPath = Join-Path '$(evidenceDirectory)' 'pulumi-update-summary.json'
                 Push-Location ./infra/Catalog.Infrastructure
                 try {
+                  # Keep the existing foundation/workload switch; enable the workload and pin
+                  # the exact immutable images produced by BuildImages.
                   & $context.PulumiPath config set catalog:apiImage '$(apiImage)' --non-interactive
                   & $context.PulumiPath config set catalog:migratorImage '$(migratorImage)' --non-interactive
                   & $context.PulumiPath config set catalog:deployWorkload true --non-interactive
-                  & $context.PulumiPath preview --non-interactive --diff
-                  if ($LASTEXITCODE -ne 0) { throw 'Workload preview failed.' }
+
+                  # Hard gate: throws and fails the stage if SQL, ACR, Key Vault, the identity,
+                  # the workspace, App Insights, the environment or the container app would be
+                  # deleted or replaced. `pulumi up` is only reached when the preview is safe.
+                  & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence -Label 'deployment-preview'
+
                   & $context.PulumiPath up --yes --non-interactive
-                  if ($LASTEXITCODE -ne 0) { throw 'Workload deployment failed.' }
+                  if ($LASTEXITCODE -ne 0) { throw 'Pulumi update failed.' }
+
+                  # Outputs carry no secrets (names and the public HTTPS URL only).
+                  $outputs = & $context.PulumiPath stack output --json | ConvertFrom-Json
+                  $outputs | ConvertTo-Json -Depth 10 |
+                    Set-Content -LiteralPath $summaryPath -Encoding utf8NoBOM
+                  Write-Host "##vso[task.setvariable variable=catalogUrl;isOutput=true]$($outputs.catalogUrl)"
                 }
                 finally {
                   Pop-Location
                 }
+            name: deploy
             env:
               PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
               CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
+          - task: PublishPipelineArtifact@1
+            displayName: Publish deployment evidence
+            condition: succeededOrFailed()
+            inputs:
+              targetPath: $(evidenceDirectory)
+              artifact: evidence-deploy
+              publishLocation: pipeline
+
+  # ---------------------------------------------------------------------------------
+  # 5. RunMigrations — main only. The Container Apps Job is the ONLY migration path;
+  #    Catalog API never calls Database.Migrate() at startup.
+  # ---------------------------------------------------------------------------------
   - stage: RunMigrations
     displayName: Run Migrations
-    dependsOn: DeployWorkload
-    condition: succeeded()
+    dependsOn: Deploy
+    condition: and(succeeded(), eq(variables.isDeployment, 'true'))
     jobs:
       - job: Migrate
+        displayName: Start and await the migrator job
         pool:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
             clean: true
-          - bash: |
-              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
-              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
-            displayName: Install pinned Pulumi CLI
+
+          - template: .azuredevops/templates/pulumi-setup.yml
+            parameters:
+              pulumiVersion: $(pulumiVersion)
+
           - task: AzureCLI@2
-            displayName: Execute database migrator job
+            name: migration
+            displayName: Execute the database migrator Container Apps Job
             inputs:
-              azureSubscription: ${{ parameters.azureServiceConnection }}
+              azureSubscription: $(azureServiceConnection)
               scriptType: pscore
               scriptLocation: inlineScript
-              inlineScript: pwsh ./scripts/run-migrations-dev.ps1
+              inlineScript: |
+                # The script starts the job, polls until completion and throws on any status
+                # other than Succeeded, emitting only redacted diagnostic log lines.
+                $result = & ./scripts/run-migrations-dev.ps1
+                New-Item -ItemType Directory -Path '$(evidenceDirectory)' -Force | Out-Null
+                $result | ConvertTo-Json -Depth 5 |
+                  Set-Content -LiteralPath (Join-Path '$(evidenceDirectory)' 'migration-job.json') -Encoding utf8NoBOM
+                Write-Host "##vso[task.setvariable variable=jobName;isOutput=true]$($result.JobName)"
+                Write-Host "##vso[task.setvariable variable=executionName;isOutput=true]$($result.ExecutionName)"
+                Write-Host "##vso[task.setvariable variable=status;isOutput=true]$($result.Status)"
             env:
               PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
               CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
 
+          - task: PublishPipelineArtifact@1
+            displayName: Publish migration evidence
+            condition: succeededOrFailed()
+            inputs:
+              targetPath: $(evidenceDirectory)
+              artifact: evidence-migrations
+              publishLocation: pipeline
+
+  # ---------------------------------------------------------------------------------
+  # 6. SmokeTests — main only, read-only GETs. Skipped automatically when migrations
+  #    fail because this stage depends on RunMigrations succeeding.
+  # ---------------------------------------------------------------------------------
   - stage: SmokeTests
     displayName: Smoke Tests
     dependsOn: RunMigrations
-    condition: succeeded()
+    condition: and(succeeded(), eq(variables.isDeployment, 'true'))
     jobs:
       - job: Smoke
+        displayName: GET /health, /products, /categories
         pool:
           vmImage: ubuntu-latest
         steps:
           - checkout: self
             clean: true
-          - bash: |
-              curl -fsSL https://get.pulumi.com | sh -s -- --version ${{ parameters.pulumiVersion }}
-              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
-            displayName: Install pinned Pulumi CLI
+
+          - template: .azuredevops/templates/pulumi-setup.yml
+            parameters:
+              pulumiVersion: $(pulumiVersion)
+
           - task: AzureCLI@2
+            name: smoke
             displayName: Run read-only smoke tests
             inputs:
-              azureSubscription: ${{ parameters.azureServiceConnection }}
+              azureSubscription: $(azureServiceConnection)
               scriptType: pscore
               scriptLocation: inlineScript
-              inlineScript: pwsh ./scripts/smoke-test-dev.ps1
+              inlineScript: |
+                # The URL is discovered from the Pulumi stack output, never hardcoded.
+                # GET only: no POST, no permanent data, no Playwright.
+                $result = & ./scripts/smoke-test-dev.ps1
+                New-Item -ItemType Directory -Path '$(evidenceDirectory)' -Force | Out-Null
+                $result | ConvertTo-Json -Depth 6 |
+                  Set-Content -LiteralPath (Join-Path '$(evidenceDirectory)' 'smoke-tests.json') -Encoding utf8NoBOM
+                Write-Host "##vso[task.setvariable variable=catalogUrl;isOutput=true]$($result.baseUrl)"
             env:
               PULUMI_CONFIG_PASSPHRASE: $(PULUMI_CONFIG_PASSPHRASE)
               CATALOG_SQL_ADMIN_PASSWORD: $(CATALOG_SQL_ADMIN_PASSWORD)
+
           - task: PublishPipelineArtifact@1
-            displayName: Stage smoke evidence
+            displayName: Publish smoke evidence
+            condition: succeededOrFailed()
             inputs:
-              targetPath: artifacts/deployment/dev
-              artifact: catalog-smoke-raw
+              targetPath: $(evidenceDirectory)
+              artifact: evidence-smoke
               publishLocation: pipeline
 
+  # ---------------------------------------------------------------------------------
+  # 7. PublishEvidence — consolidates every stage artifact plus a run manifest.
+  #    Runs for pull requests too, so a PR keeps its preview evidence.
+  # ---------------------------------------------------------------------------------
   - stage: PublishEvidence
     displayName: Publish Evidence
-    dependsOn: SmokeTests
-    condition: succeeded()
+    dependsOn:
+      - Validate
+      - InfrastructurePreview
+      - BuildImages
+      - Deploy
+      - RunMigrations
+      - SmokeTests
+    condition: not(canceled())
+    variables:
+      apiImage: $[ stageDependencies.BuildImages.Build.outputs['images.apiImage'] ]
+      migratorImage: $[ stageDependencies.BuildImages.Build.outputs['images.migratorImage'] ]
+      imageTag: $[ stageDependencies.BuildImages.Build.outputs['images.imageTag'] ]
+      migrationJobName: $[ stageDependencies.RunMigrations.Migrate.outputs['migration.jobName'] ]
+      migrationExecution: $[ stageDependencies.RunMigrations.Migrate.outputs['migration.executionName'] ]
+      migrationStatus: $[ stageDependencies.RunMigrations.Migrate.outputs['migration.status'] ]
+      # Taken from Deploy so the manifest still records the URL when smoke tests fail.
+      catalogUrl: $[ stageDependencies.Deploy.DeployWorkload.outputs['deploy.catalogUrl'] ]
     jobs:
       - job: Publish
+        displayName: Consolidate run evidence
         pool:
           vmImage: ubuntu-latest
         steps:
-          - task: DownloadPipelineArtifact@2
-            inputs:
-              artifact: catalog-smoke-raw
-              path: $(Pipeline.Workspace)/catalog-smoke
+          - checkout: none
+
+          # Pulls every artifact published by the stages that actually ran.
+          - download: current
+            displayName: Download stage evidence
+
+          - pwsh: |
+              $root = Join-Path '$(Pipeline.Workspace)' 'catalog-evidence'
+              New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+              Get-ChildItem -Path '$(Pipeline.Workspace)' -Directory -Filter 'evidence-*' |
+                ForEach-Object {
+                  Copy-Item -Path $_.FullName -Destination (Join-Path $root $_.Name) -Recurse -Force
+                }
+
+              # Run manifest. Deliberately contains no secrets, connection strings or
+              # Key Vault values - only identifiers, image references and public results.
+              $manifest = [pscustomobject]@{
+                generatedAtUtc   = [DateTimeOffset]::UtcNow.ToString('O')
+                sourceProvider   = 'github'
+                repository       = '$(Build.Repository.Name)'
+                branch           = '$(Build.SourceBranchName)'
+                commitSha        = '$(Build.SourceVersion)'
+                buildId          = '$(Build.BuildId)'
+                buildNumber      = '$(Build.BuildNumber)'
+                buildReason      = '$(Build.Reason)'
+                isDeployment     = '$(isDeployment)'
+                pulumiStack      = '$(PULUMI_STACK)'
+                pulumiBackend    = '$(PULUMI_BACKEND_URL)'
+                azureLocation    = '$(AZURE_LOCATION)'
+                serviceConnection = '$(azureServiceConnection)'
+                imageTag         = '$(imageTag)'
+                apiImage         = '$(apiImage)'
+                migratorImage    = '$(migratorImage)'
+                migrationJob     = '$(migrationJobName)'
+                migrationRun     = '$(migrationExecution)'
+                migrationStatus  = '$(migrationStatus)'
+                deployedUrl      = '$(catalogUrl)'
+              }
+              $manifest | ConvertTo-Json -Depth 5 |
+                Set-Content -LiteralPath (Join-Path $root 'run-manifest.json') -Encoding utf8NoBOM
+              $manifest | Format-List
+            displayName: Build run manifest
+
           - task: PublishPipelineArtifact@1
-            displayName: Publish deployment evidence
+            displayName: Publish consolidated evidence
             inputs:
-              targetPath: $(Pipeline.Workspace)/catalog-smoke
+              targetPath: $(Pipeline.Workspace)/catalog-evidence
               artifact: catalog-dev-deployment-evidence
               publishLocation: pipeline
