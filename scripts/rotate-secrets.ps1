@@ -11,8 +11,11 @@ holding the leaked passphrase can decrypt it. Rotating only one of the two is po
 a new SQL password re-encrypted under the leaked passphrase is just as readable, and a new
 passphrase protecting the already-leaked password protects nothing.
 
-No secret is ever printed, written to a log, or passed as a command-line argument. The
-current passphrase is read from the environment so it never appears in shell history.
+No secret is ever printed or written to a log. The current passphrase is read from the
+environment and the new one is fed to the CLI on stdin, so neither reaches shell history.
+The generated SQL password is passed to `pulumi config set` as an argument, so it is
+briefly visible to other processes on this machine; that is acceptable on a single-user
+workstation and is the only place any of these values is exposed at all.
 
 Run interactively from the repository root:
 
