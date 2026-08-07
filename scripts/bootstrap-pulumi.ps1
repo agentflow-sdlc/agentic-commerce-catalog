@@ -128,6 +128,12 @@ try {
         throw 'PULUMI_CONFIG_PASSPHRASE must be present in the process environment.'
     }
 
+    # Azure Pipelines leaves "$(NAME)" untouched when the variable is not defined, which
+    # would otherwise surface much later as an unexplained decryption failure.
+    if ($env:PULUMI_CONFIG_PASSPHRASE -match '^\$\(.+\)$') {
+        throw 'PULUMI_CONFIG_PASSPHRASE was not substituted. Define it as a secret variable in the catalog-dev variable group.'
+    }
+
     $stacks = @(& $pulumiPath stack ls --json | ConvertFrom-Json)
     $devStack = $stacks | Where-Object { $_.name -eq 'dev' -or $_.name -like '*/dev' }
     if ($null -eq $devStack) {
