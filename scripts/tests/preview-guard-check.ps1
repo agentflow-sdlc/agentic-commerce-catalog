@@ -37,10 +37,14 @@ function New-PreviewFixture {
 }
 
 function Assert-GuardAccepts {
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Because)
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Because,
+        [string[]]$Allowed = @()
+    )
 
     try {
-        & $guard -PreviewJsonPath $Path -Label 'self-check' | Out-Null
+        & $guard -PreviewJsonPath $Path -Label 'self-check' -AllowedDeletionTypes $Allowed | Out-Null
     }
     catch {
         throw "FAILED: guard rejected a safe preview ($Because). $($_.Exception.Message)"
@@ -50,10 +54,14 @@ function Assert-GuardAccepts {
 }
 
 function Assert-GuardRejects {
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Because)
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Because,
+        [string[]]$Allowed = @()
+    )
 
     try {
-        & $guard -PreviewJsonPath $Path -Label 'self-check' | Out-Null
+        & $guard -PreviewJsonPath $Path -Label 'self-check' -AllowedDeletionTypes $Allowed | Out-Null
     }
     catch {
         Write-Host "  ok: $Because"
@@ -66,6 +74,7 @@ function Assert-GuardRejects {
 $sqlServerUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogFoundation$azure-native:sql:Server::catalog-sql-server'
 $containerAppUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogWorkload$azure-native:app:ContainerApp::catalog-api'
 $roleAssignmentUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogWorkload$azure-native:authorization:RoleAssignment::catalog-acr-pull'
+$registryUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogFoundation$azure-native:containerregistry:Registry::catalog-registry'
 
 try {
     Write-Host 'Pulumi preview guard self-check'
@@ -101,6 +110,24 @@ try {
         -Path (New-PreviewFixture -Name 'container-app-delete-replaced' -Steps @(
             @{ op = 'delete-replaced'; urn = $containerAppUrn })) `
         -Because 'a replacement delete of the container app is refused'
+
+    # Retiring a paid resource on purpose has to be possible, but only when named.
+    Assert-GuardAccepts `
+        -Path (New-PreviewFixture -Name 'registry-delete-allowed' -Steps @(
+            @{ op = 'delete'; urn = $registryUrn })) `
+        -Because 'deleting the registry is allowed when explicitly named' `
+        -Allowed @('azure-native:containerregistry:Registry')
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'registry-delete-unnamed' -Steps @(
+            @{ op = 'delete'; urn = $registryUrn })) `
+        -Because 'deleting the registry is refused when not named'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'allowance-does-not-leak' -Steps @(
+            @{ op = 'delete'; urn = $sqlServerUrn })) `
+        -Because 'allowing the registry does not also allow Azure SQL' `
+        -Allowed @('azure-native:containerregistry:Registry')
 
     Write-Host 'Pulumi preview guard self-check passed.'
 }
