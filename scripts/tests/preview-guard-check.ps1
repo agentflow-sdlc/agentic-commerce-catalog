@@ -75,6 +75,7 @@ $sqlServerUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogFoundation$az
 $containerAppUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogWorkload$azure-native:app:ContainerApp::catalog-api'
 $roleAssignmentUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogWorkload$azure-native:authorization:RoleAssignment::catalog-acr-pull'
 $registryUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogFoundation$azure-native:containerregistry:Registry::catalog-registry'
+$subnetUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogFoundation$azure-native:network:Subnet::container-apps-subnet'
 
 try {
     Write-Host 'Pulumi preview guard self-check'
@@ -128,6 +129,18 @@ try {
             @{ op = 'delete'; urn = $sqlServerUrn })) `
         -Because 'allowing the registry does not also allow Azure SQL' `
         -Allowed @('azure-native:containerregistry:Registry')
+
+    # Tightening the SQL firewall adds a service endpoint to this subnet. That is an
+    # update, but a replace would destroy the environment delegated into it.
+    Assert-GuardAccepts `
+        -Path (New-PreviewFixture -Name 'subnet-update' -Steps @(
+            @{ op = 'update'; urn = $subnetUrn })) `
+        -Because 'adding a service endpoint to the subnet is allowed'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'subnet-replace' -Steps @(
+            @{ op = 'replace'; urn = $subnetUrn })) `
+        -Because 'replacing the container apps subnet is refused'
 
     Write-Host 'Pulumi preview guard self-check passed.'
 }

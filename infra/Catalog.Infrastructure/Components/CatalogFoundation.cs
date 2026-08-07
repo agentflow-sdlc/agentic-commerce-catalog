@@ -73,6 +73,17 @@ internal sealed class CatalogFoundation : ComponentResource
                         ServiceName = "Microsoft.App/environments",
                     },
                 ],
+                // Carries the subnet's identity to Azure SQL so the server can admit this
+                // subnet specifically instead of every Azure tenant. Free, and unlike an
+                // outbound IP allowlist it survives Container Apps changing its egress
+                // addresses. Paired with the virtual network rule on the server below.
+                ServiceEndpoints =
+                [
+                    new NetworkInputs.ServiceEndpointPropertiesFormatArgs
+                    {
+                        Service = "Microsoft.Sql",
+                    },
+                ],
             },
             childOptions);
 
@@ -214,9 +225,9 @@ internal sealed class CatalogFoundation : ComponentResource
                 AdministratorLoginPassword = args.SqlAdminPassword,
                 MinimalTlsVersion = "1.2",
                 // A Private Endpoint costs roughly $7/month permanently to demonstrate a
-                // topology this POC is not demonstrating. Under free-first the server is
-                // reachable over its public endpoint but only from Azure services (see the
-                // firewall rule below), still TLS 1.2 minimum, still Key Vault credentials.
+                // topology this POC is not demonstrating. Under free-first the server keeps
+                // its public endpoint, but the virtual network rule below admits only the
+                // Container Apps subnet, still TLS 1.2 minimum, still Key Vault credentials.
                 PublicNetworkAccess = args.FreeFirst ? "Enabled" : "Disabled",
                 RestrictOutboundNetworkAccess = "Enabled",
                 Version = "12.0",
@@ -226,21 +237,24 @@ internal sealed class CatalogFoundation : ComponentResource
 
         if (args.FreeFirst)
         {
-            // The 0.0.0.0-0.0.0.0 rule is Azure's documented "allow Azure services"
-            // switch, not an open-internet rule: it admits traffic originating from Azure
-            // and rejects everything else. It is NOT equivalent to a Private Endpoint -
-            // it trusts any Azure tenant, not just this subscription - and production
-            // should restore the private endpoint. Container Apps Consumption has no
-            // stable outbound IP to allowlist, so there is no narrower option here.
-            _ = new FirewallRule(
-                "catalog-sql-allow-azure-services",
-                new FirewallRuleArgs
+            // Admits only the subnet the Container Apps environment runs in. This replaces
+            // the 0.0.0.0-0.0.0.0 "allow Azure services" rule, which sounds narrow but
+            // admits every Azure tenant on the platform, leaving the admin password as the
+            // only barrier for anyone able to create a VM. A virtual network rule costs
+            // nothing, is not affected by Container Apps rotating its outbound addresses,
+            // and leaves the public endpoint unreachable from everywhere else.
+            //
+            // Nothing reaches the database from outside this subnet: migrations run as a
+            // Container Apps Job inside it, and the smoke tests only call the API over
+            // HTTPS. Connecting from a workstation needs a temporary rule for that address.
+            _ = new VirtualNetworkRule(
+                "catalog-sql-allow-container-apps",
+                new VirtualNetworkRuleArgs
                 {
                     ResourceGroupName = ResourceGroup.Name,
                     ServerName = SqlServer.Name,
-                    FirewallRuleName = "AllowAllWindowsAzureIps",
-                    StartIpAddress = "0.0.0.0",
-                    EndIpAddress = "0.0.0.0",
+                    VirtualNetworkRuleName = "allow-container-apps-subnet",
+                    VirtualNetworkSubnetId = ContainerAppsSubnet.Id,
                 },
                 childOptions);
         }

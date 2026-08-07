@@ -48,6 +48,11 @@ $script:ProtectedTypes = @(
     'azure-native:app:ManagedEnvironment'
     'azure-native:app:ContainerApp'
     'azure-native:resources:ResourceGroup'
+    # The Container Apps environment is delegated into this subnet and cannot survive it
+    # being recreated. Property edits such as adding a service endpoint are updates and
+    # stay allowed; only a delete or replace is refused.
+    'azure-native:network:VirtualNetwork'
+    'azure-native:network:Subnet'
 )
 
 # `replace` is expanded by the engine into create-replacement/delete-replaced, so all four
