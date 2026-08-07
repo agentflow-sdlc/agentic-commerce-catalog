@@ -196,11 +196,25 @@ A `concurrency` group keeps two runs from mutating the shared `dev` stack at onc
 
 ### Container image builds
 
-CI builds both images with the runner's Docker daemon and pushes them with an Entra token obtained from the OIDC login. The registry keeps its admin user disabled, so no registry username, password or key exists anywhere.
+Images live in **GitHub Container Registry**, not Azure Container Registry. ACR Basic costs a fixed monthly amount whether or not anything pulls from it, and this repository is public, so its container packages can be public too without exposing anything new.
 
-`az acr build` (ACR Tasks) is **not** used, because this subscription refuses ACR Tasks requests with `TasksOperationsNotAllowed`. Lifting that requires an Azure support request; until then, building on the runner is the working path. `scripts/deploy-dev.ps1` still calls `az acr build` and will hit the same wall if run locally.
+Public GHCR packages are pulled **anonymously**, which means Azure Container Apps needs no registry credential at all — no personal access token, no secret in Key Vault, nothing to rotate. `GITHUB_TOKEN` pushes during the workflow and expires with the job.
 
-Tags are immutable and locked after push. A re-run of the same run reuses the existing image instead of failing against the locked tag.
+`build-images` builds on the runner's Docker daemon, pushes, makes the packages public, and then verifies an anonymous pull actually succeeds. That verification is what protects the ACR retirement: `deploy` is the job that removes ACR, so a failure at any earlier point leaves it in place.
+
+`az acr build` (ACR Tasks) is not used at all — this subscription refuses ACR Tasks with `TasksOperationsNotAllowed`, and the registry is being retired anyway. `scripts/deploy-dev.ps1` still calls it and will hit that wall if run locally.
+
+### Cost profile
+
+The stack runs under a free-first profile. See [`docs/azure-cost-optimization.md`](docs/azure-cost-optimization.md) for the audit and [`docs/azure-cost-baseline.md`](docs/azure-cost-baseline.md) for the resulting baseline.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `catalog:costProfile` | `poc-free` | Selects the free or minimum option wherever a choice exists |
+| `catalog:allowPaidResources` | `false` | Anything off the free path must opt in explicitly |
+| `catalog:sqlUseFreeOffer` | `false` | Separate opt-in — adopting the SQL free offer **replaces and destroys** the database |
+
+Under `poc-free` the stack does not provision ACR, private endpoints, dedicated Container Apps compute, a production SQL SKU, premium Functions plans, premium Cosmos, a paid Azure AI Search tier, or provisioned model capacity.
 
 ### Stack configuration is committed
 
