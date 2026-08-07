@@ -261,21 +261,28 @@ jobs:
           "apiImage=$registry/catalog-api:$tag" | Add-Content $env:GITHUB_OUTPUT
           "migratorImage=$registry/catalog-database-migrator:$tag" | Add-Content $env:GITHUB_OUTPUT
 
-      - name: Make the packages public
+      - name: Make the packages public (best effort)
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN carries `packages: write`, which is enough to push but NOT to
+          # change visibility - that needs `admin:packages`, so this call returns 404 and
+          # is best effort only. Package visibility is a one-time setting that persists
+          # across pushes, so it only ever has to be done once, by hand or with a token
+          # that has the scope. The anonymous pull check below is the real gate.
+          GH_TOKEN: ${{ secrets.GHCR_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          # Container Apps pulls anonymously, which is only possible while the package is
-          # public. A GHCR package is private by default even when its repository is
-          # public, so visibility has to be set explicitly after the first push.
           foreach ($package in 'catalog-api', 'catalog-database-migrator') {
             gh api --method PATCH "orgs/${{ github.repository_owner }}/packages/container/$package" `
               -f visibility=public 2>&1 | Out-Host
+
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::Could not set '$package' visibility automatically; the anonymous pull check below is what actually decides."
+              Write-Host "::warning::Could not set '$package' visibility automatically (expected with GITHUB_TOKEN)."
             }
           }
+
+          # Without this the step fails purely because the last native command failed,
+          # even though every failure above is deliberately tolerated.
+          $global:LASTEXITCODE = 0
 
       - name: Verify an anonymous pull works
         shell: pwsh
@@ -291,7 +298,23 @@ jobs:
           foreach ($reference in $env:API_IMAGE, $env:MIGRATOR_IMAGE) {
             docker pull $reference
             if ($LASTEXITCODE -ne 0) {
-              throw "Anonymous pull of '$reference' failed. Azure Container Apps would not be able to pull it either, so the deployment is stopped before Azure Container Registry is removed. Make the GHCR package public and re-run."
+              $package = (($reference -split '/')[-1] -split ':')[0]
+              $settings = "https://github.com/orgs/${{ github.repository_owner }}/packages/container/$package/settings"
+              $message = @(
+                "Anonymous pull of '$reference' failed, so Azure Container Apps could not pull it either."
+                "The deployment is stopped here, before Azure Container Registry is removed."
+                ""
+                "The image itself pushed fine - the package is simply still private. GHCR packages are"
+                "private on first push even when the repository is public, and GITHUB_TOKEN cannot"
+                "change that because it needs admin:packages."
+                ""
+                "Fix it once and it persists for every future push:"
+                "  $settings -> Danger Zone -> Change visibility -> Public"
+                ""
+                "Then re-run this workflow."
+              ) -join [Environment]::NewLine
+
+              throw $message
             }
 
             Write-Host "Anonymous pull of '$reference' succeeded."
