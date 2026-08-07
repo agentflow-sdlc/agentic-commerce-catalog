@@ -50,9 +50,22 @@ try {
             throw "Smoke test '$path' exposed internal or sensitive information."
         }
 
+        # Collections use the documented { data, correlationId } envelope, so the array is
+        # under .data rather than at the root. /health is the deliberate exception and
+        # returns its payload directly.
         $isCollection = $path -in @('/products', '/categories')
-        if ($isCollection -and $parsed -isnot [System.Array]) {
-            throw "Smoke test '$path' did not return a JSON collection."
+        if ($isCollection) {
+            if ($parsed.PSObject.Properties.Name -notcontains 'data') {
+                throw "Smoke test '$path' did not return a 'data' envelope property."
+            }
+
+            if (@($parsed.data) -isnot [System.Array]) {
+                throw "Smoke test '$path' did not return a JSON collection in 'data'."
+            }
+
+            if ([string]::IsNullOrWhiteSpace([string]$parsed.correlationId)) {
+                throw "Smoke test '$path' did not return a correlationId in its envelope."
+            }
         }
 
         $results += [pscustomobject]@{
