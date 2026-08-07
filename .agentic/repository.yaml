@@ -11,9 +11,7 @@ administration:
   system: azure-devops
   responsibilities:
     - boards
-    - pipelines
     - states
-    - evidence
 
 sourceControl:
   system: github
@@ -22,10 +20,71 @@ sourceControl:
     - branches
     - commits
     - pull-requests
+    - pipelines
+    - evidence
 
 ciCd:
-  system: azure-pipelines
-  definition: azure-pipelines.yml
+  system: github-actions
+  definition: .github/workflows/ci-cd.yml
+  workflow: ci-cd
+  runner: ubuntu-latest
+  sourceProvider: github
+  # Azure Pipelines no longer runs CI/CD for this repository; the definition was removed
+  # and the Azure DevOps pipeline disabled so the two cannot compete.
+  azurePipelines: none
+  azureAuthentication: workload-identity-federation-oidc
+  jobs:
+    - validate
+    - infrastructure-preview
+    - build-images
+    - deploy
+    - run-migrations
+    - smoke-tests
+    - publish-evidence
+  triggers:
+    pullRequest:
+      target: main
+      jobs:
+        - validate
+        - infrastructure-preview
+        - publish-evidence
+      deploys: false
+    main:
+      target: main
+      jobs:
+        - validate
+        - infrastructure-preview
+        - build-images
+        - deploy
+        - run-migrations
+        - smoke-tests
+        - publish-evidence
+      deploys: true
+  imageTagging:
+    strategy: immutable
+    format: <run-id>-<short-sha>
+    latestTagProhibited: true
+  variables:
+    storage: github-repository-variables
+    names:
+      - AZURE_CLIENT_ID
+      - AZURE_TENANT_ID
+      - AZURE_SUBSCRIPTION_ID
+      - AZURE_LOCATION
+      - PULUMI_BACKEND_URL
+      - PULUMI_STACK
+      - CATALOG_SQL_ADMIN_LOGIN
+  secrets:
+    storage: github-repository-secrets
+    names:
+      - PULUMI_CONFIG_PASSPHRASE
+      - CATALOG_SQL_ADMIN_PASSWORD
+    committed: false
+
+administrationNote: >-
+  Azure DevOps Boards remains the work-item and state system. Pipelines were migrated to
+  GitHub Actions, so AB#55 and AB#66 describe an Azure Pipelines setup that is no longer
+  the implemented mechanism.
 
 services:
   - SERVICE-CATALOG-API

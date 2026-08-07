@@ -91,16 +91,34 @@ Development defaults favor low cost:
 
 Resources that may incur cost without user traffic include Azure SQL, ACR storage/builds, Private Endpoint, Log Analytics/Application Insights ingestion and retention, Key Vault operations, and Container Apps environment/network consumption. Exact prices vary by subscription and region.
 
-## Future Azure DevOps configuration
+## GitHub Actions configuration
 
-`azure-pipelines.yml` is disabled for deployment by default. Before enabling it, configure:
+`.github/workflows/ci-cd.yml` runs this same flow automatically from GitHub:
 
-- An Azure Resource Manager service connection with access to the active dev subscription and backend RBAC.
-- Secret pipeline variables `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
-- Optional protected Azure DevOps Environment approvals for dev deployment stages.
-- Artifact retention suitable for smoke evidence.
+- Azure access through `azure/login` with **OIDC workload identity federation** — no client secret. The workflow declares `id-token: write` and `contents: read`.
+- Repository variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `PULUMI_BACKEND_URL`, `PULUMI_STACK`, `CATALOG_SQL_ADMIN_LOGIN`.
+- Repository secrets `PULUMI_CONFIG_PASSPHRASE` and `CATALOG_SQL_ADMIN_PASSWORD`.
 
-No service connection, variable group, Environment, or pipeline is created by this repository execution.
+The Entra application backing the federation carries four federated credentials, two subject formats for each of `:ref:refs/heads/main` and `:pull_request`:
+
+```text
+repo:<owner>/<repo>:...                        classic subject
+repo:<owner>@<org-id>/<repo>@<repo-id>:...     GitHub immutable-identifier subject
+```
+
+Both are registered on purpose. This organization currently issues immutable-identifier subjects, and a credential registered only in the classic format fails with `AADSTS700213: No matching federated identity record found`. Keeping both means renaming the organization or the repository does not break deployments, and neither does GitHub changing the default format.
+
+Beyond `Contributor` on the subscription the identity needs:
+
+| Role | Scope | Why |
+| --- | --- | --- |
+| `Storage Blob Data Contributor` | the Pulumi state Storage Account | Read and write the `azblob` backend |
+| `Role Based Access Control Administrator` | the Catalog resource group | `CatalogWorkload` creates the `AcrPull`, `Key Vault Secrets User`, and `Monitoring Metrics Publisher` assignments |
+| `Key Vault Secrets Officer` | the Catalog Key Vault | Manage the `catalog-db` secret |
+
+Pull requests execute `validate` and `infrastructure-preview` only. Deployment jobs are gated on the event not being a pull request and the ref being `refs/heads/main`.
+
+`scripts/invoke-pulumi-preview.ps1` runs before every update and fails the job when the plan would delete or replace protected infrastructure, so the destroy safety rule above is enforced mechanically and not only by convention.
 
 ## Out of scope
 

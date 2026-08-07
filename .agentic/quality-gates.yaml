@@ -27,11 +27,27 @@ gates:
     command: dotnet ef migrations script --idempotent --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
   pulumi-build:
     command: dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration Release
+  preview-guard-self-check:
+    command: pwsh ./scripts/tests/preview-guard-check.ps1
+    offline: true
+    verifies: pulumi-preview-destruction-guard
   pulumi-preview:
-    command: pulumi preview --non-interactive --diff
+    command: pwsh ./scripts/invoke-pulumi-preview.ps1 -PulumiPath <pulumi> -EvidencePath <evidence>
     requiresAzureCli: true
     requiresSecrets:
       - PULUMI_CONFIG_PASSPHRASE
+    blocksDeploymentOnProtectedResourceDestruction: true
+    protectedResourceTypes:
+      - azure-native:sql:Server
+      - azure-native:sql:Database
+      - azure-native:containerregistry:Registry
+      - azure-native:keyvault:Vault
+      - azure-native:managedidentity:UserAssignedIdentity
+      - azure-native:operationalinsights:Workspace
+      - azure-native:insights:Component
+      - azure-native:app:ManagedEnvironment
+      - azure-native:app:ContainerApp
+      - azure-native:resources:ResourceGroup
   container-builds:
     command: pwsh ./scripts/deploy-dev.ps1
     provider: azure-container-registry-tasks
@@ -47,3 +63,47 @@ gates:
       - /health
       - /products
       - /categories
+
+# Which gates each GitHub Actions job enforces, and which jobs a pull request may run.
+pipeline:
+  system: github-actions
+  definition: .github/workflows/ci-cd.yml
+  jobs:
+    validate:
+      runsOnPullRequest: true
+      gates:
+        - restore
+        - build
+        - catalog-unit-tests
+        - api-tests
+        - architecture-tests
+        - openapi-validation
+        - sql-integration-tests
+        - migration-validation
+        - migration-script
+        - formatting
+        - preview-guard-self-check
+        - pulumi-build
+    infrastructure-preview:
+      runsOnPullRequest: true
+      gates:
+        - pulumi-preview
+    build-images:
+      runsOnPullRequest: false
+      gates:
+        - container-builds
+    deploy:
+      runsOnPullRequest: false
+      gates:
+        - pulumi-preview
+    run-migrations:
+      runsOnPullRequest: false
+      gates:
+        - database-migration-job
+    smoke-tests:
+      runsOnPullRequest: false
+      gates:
+        - deployment-smoke-tests
+    publish-evidence:
+      runsOnPullRequest: true
+      gates: []

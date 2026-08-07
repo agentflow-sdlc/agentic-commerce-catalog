@@ -18,6 +18,11 @@
 | Secret delivery | Pulumi encrypted config, Key Vault, managed identity | SQL credentials stay encrypted; workloads consume a Key Vault reference. |
 | SQL network | VNet, Private Endpoint, private DNS | Public SQL access is disabled; the Container Apps environment owns the application path. |
 | Telemetry | Optional Azure Monitor OpenTelemetry registration | Local execution works without Application Insights; Azure uses managed-identity ingestion. |
-| Deployment orchestration | PowerShell scripts and future Azure Pipeline | Current deployment uses Azure CLI; the pipeline remains gated until Azure DevOps resources are configured. |
+| Deployment orchestration | PowerShell scripts in `scripts/`, orchestrated by `.github/workflows/ci-cd.yml` | The same scripts serve local operation and CI/CD, so automation adds orchestration and evidence instead of a divergent second path. Replacing Azure Pipelines with GitHub Actions changed only the workflow file. |
+| CI/CD provider | `.github/workflows/ci-cd.yml` as the only definition | GitHub Actions runs CI/CD; no Azure Pipelines definition and no competing deployment pipeline exist. |
+| Promotion boundary | `github.event_name` and `github.ref` gate | Pull requests validate and preview only; deployment jobs run exclusively for pushes to `main`. |
+| Infrastructure destruction risk | `scripts/invoke-pulumi-preview.ps1` | Every update is preceded by a preview; a plan deleting or replacing protected Azure resources fails the job, and `pulumi destroy` is never automated. |
+| Image identity | Immutable `<run-id>-<short-sha>` ACR tags, locked after build | A deployed revision is always traceable to one commit and one run; `latest` is never deployed and rollback repoints to a known-good tag. |
+| Cloud credentials | OIDC workload identity federation | Deployment holds no client secret, PAT, or storage key; the two secrets stay in GitHub repository secrets and never enter the repository. |
 
 The volatile infrastructure implementation never changes the provider-neutral domain or public contracts. Production assemblies cannot reference Pulumi or the infrastructure project.

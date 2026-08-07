@@ -1,0 +1,509 @@
+# Catalog CI/CD — GitHub Actions is the only CI/CD definition.
+#
+#   Pull request -> main
+#     validate -> infrastructure-preview -> publish-evidence          (never deploys)
+#
+#   Push to main
+#     validate -> infrastructure-preview -> build-images -> deploy
+#     -> run-migrations -> smoke-tests -> publish-evidence
+#
+# Azure access uses OIDC (workload identity federation) through azure/login.
+# There is no client secret, no PAT and no storage account key in this workflow.
+# PULUMI_CONFIG_PASSPHRASE and CATALOG_SQL_ADMIN_PASSWORD are GitHub secrets and are
+# referenced, never written, here.
+
+name: ci-cd
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# OIDC needs id-token: write. Everything else stays read-only.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Never let two runs mutate the shared dev stack at the same time. Pull request runs
+  # supersede each other; main deployments queue instead of cancelling.
+  group: catalog-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUILD_CONFIGURATION: Release
+  PULUMI_VERSION: 3.255.0
+
+jobs:
+  # -------------------------------------------------------------------------------
+  # 1. validate — every quality gate, identical for pull requests and for main.
+  # -------------------------------------------------------------------------------
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Prepare evidence directory
+        run: mkdir -p evidence/test-results
+
+      - name: Restore repository tools
+        run: dotnet tool restore
+
+      - name: dotnet restore
+        run: dotnet restore Catalog.sln
+
+      - name: dotnet build
+        run: dotnet build Catalog.sln --configuration "$BUILD_CONFIGURATION" --no-restore
+
+      - name: Unit tests
+        run: >-
+          dotnet test tests/Catalog.Product.Tests/Catalog.Product.Tests.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+          --logger "trx;LogFileName=Catalog.UnitTests.trx"
+          --results-directory evidence/test-results
+
+      - name: API tests
+        run: >-
+          dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+          --logger "trx;LogFileName=Catalog.ApiTests.trx"
+          --results-directory evidence/test-results
+
+      - name: Architecture tests (IDesign dependency rules)
+        run: >-
+          dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+          --logger "trx;LogFileName=Catalog.ArchitectureTests.trx"
+          --results-directory evidence/test-results
+
+      - name: OpenAPI contract validation
+        run: >-
+          dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+          --filter Category=OpenApi
+          --logger "trx;LogFileName=Catalog.OpenApiValidation.trx"
+          --results-directory evidence/test-results
+
+      - name: Integration tests (isolated SQL Server)
+        env:
+          RUN_SQL_SERVER_TESTS: "true"
+        run: >-
+          dotnet test tests/Catalog.Product.IntegrationTests/Catalog.Product.IntegrationTests.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+          --logger "trx;LogFileName=Catalog.IntegrationTests.trx"
+          --results-directory evidence/test-results
+
+      - name: Validate EF Core migration model
+        run: >-
+          dotnet ef migrations has-pending-model-changes
+          --project src/Catalog.Accessors/Catalog.Accessors.csproj
+          --startup-project src/Catalog.Api/Catalog.Api.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+
+      - name: Generate idempotent migration evidence
+        run: >-
+          dotnet ef migrations script --idempotent
+          --project src/Catalog.Accessors/Catalog.Accessors.csproj
+          --startup-project src/Catalog.Api/Catalog.Api.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-build
+          --output evidence/Catalog.Migrations.sql
+
+      - name: dotnet format --verify-no-changes
+        run: dotnet format Catalog.sln --verify-no-changes --no-restore
+
+      - name: Verify Pulumi destruction guard
+        shell: pwsh
+        run: ./scripts/tests/preview-guard-check.ps1
+
+      - name: Restore Pulumi C# packages
+        run: dotnet restore infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
+
+      - name: Build Pulumi C# project
+        run: >-
+          dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
+          --configuration "$BUILD_CONFIGURATION" --no-restore
+
+      - name: Publish validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-validate
+          path: evidence
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------------------
+  # 2. infrastructure-preview — read-only. Runs for pull requests AND for main.
+  #    Never calls `pulumi up`; fails if protected infrastructure would be destroyed.
+  # -------------------------------------------------------------------------------
+  infrastructure-preview:
+    name: Infrastructure Preview
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install pinned Pulumi CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.pulumi.com | sh -s -- --version "$PULUMI_VERSION"
+          echo "$HOME/.pulumi/bin" >> "$GITHUB_PATH"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preview the existing dev stack
+        shell: pwsh
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
+        run: |
+          # bootstrap-pulumi.ps1 discovers the existing Azure Blob backend, logs in and
+          # selects the existing `dev` stack. It never initialises a new stack when one
+          # exists and never changes the passphrase secrets provider.
+          $context = ./scripts/bootstrap-pulumi.ps1 -PassThru
+          $guard = (Resolve-Path ./scripts/invoke-pulumi-preview.ps1).Path
+          $evidence = Join-Path $PWD 'evidence/pulumi-preview.json'
+          Push-Location ./infra/Catalog.Infrastructure
+          try {
+            # Preview only. No `pulumi up`, no `pulumi destroy`.
+            & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence -Label 'infrastructure-preview'
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Publish preview evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-infrastructure-preview
+          path: evidence
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------------------
+  # 3. build-images — main only. Immutable tags via ACR Tasks (no Docker-in-Docker).
+  # -------------------------------------------------------------------------------
+  build-images:
+    name: Build Images
+    needs: infrastructure-preview
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      apiImage: ${{ steps.images.outputs.apiImage }}
+      migratorImage: ${{ steps.images.outputs.migratorImage }}
+      imageTag: ${{ steps.images.outputs.imageTag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install pinned Pulumi CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.pulumi.com | sh -s -- --version "$PULUMI_VERSION"
+          echo "$HOME/.pulumi/bin" >> "$GITHUB_PATH"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and lock immutable ACR images
+        id: images
+        shell: pwsh
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
+        run: |
+          $context = ./scripts/bootstrap-pulumi.ps1 -PassThru
+          Push-Location ./infra/Catalog.Infrastructure
+          try {
+            # Registry coordinates come from Pulumi stack outputs, never hardcoded.
+            $registry = & $context.PulumiPath stack output containerRegistryName
+            $loginServer = & $context.PulumiPath stack output containerRegistryLoginServer
+          }
+          finally {
+            Pop-Location
+          }
+
+          $tag = "${{ github.run_id }}-$('${{ github.sha }}'.Substring(0, 12))"
+
+          az acr build --registry $registry --image "catalog-api:$tag" `
+            --file Dockerfile --platform linux/amd64 .
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog API ACR build failed.' }
+
+          az acr build --registry $registry --image "catalog-database-migrator:$tag" `
+            --file src/Catalog.DatabaseMigrator/Dockerfile --platform linux/amd64 .
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog Database Migrator ACR build failed.' }
+
+          # Lock the tags so a later run can never repoint them to different content.
+          az acr repository update --name $registry --image "catalog-api:$tag" `
+            --write-enabled false --delete-enabled false --output none
+          az acr repository update --name $registry --image "catalog-database-migrator:$tag" `
+            --write-enabled false --delete-enabled false --output none
+
+          "imageTag=$tag" | Add-Content $env:GITHUB_OUTPUT
+          "apiImage=$loginServer/catalog-api:$tag" | Add-Content $env:GITHUB_OUTPUT
+          "migratorImage=$loginServer/catalog-database-migrator:$tag" | Add-Content $env:GITHUB_OUTPUT
+
+  # -------------------------------------------------------------------------------
+  # 4. deploy — main only. Updates the EXISTING stack; creates nothing in parallel.
+  # -------------------------------------------------------------------------------
+  deploy:
+    name: Deploy
+    needs: build-images
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      catalogUrl: ${{ steps.deploy.outputs.catalogUrl }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install pinned Pulumi CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.pulumi.com | sh -s -- --version "$PULUMI_VERSION"
+          echo "$HOME/.pulumi/bin" >> "$GITHUB_PATH"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preview, verify, then update the existing stack
+        id: deploy
+        shell: pwsh
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
+          API_IMAGE: ${{ needs.build-images.outputs.apiImage }}
+          MIGRATOR_IMAGE: ${{ needs.build-images.outputs.migratorImage }}
+        run: |
+          $context = ./scripts/bootstrap-pulumi.ps1 -PassThru
+          $guard = (Resolve-Path ./scripts/invoke-pulumi-preview.ps1).Path
+          $evidence = Join-Path $PWD 'evidence/pulumi-preview-deploy.json'
+          $summaryPath = Join-Path $PWD 'evidence/pulumi-update-summary.json'
+          New-Item -ItemType Directory -Path (Join-Path $PWD 'evidence') -Force | Out-Null
+          Push-Location ./infra/Catalog.Infrastructure
+          try {
+            # Keep the existing foundation/workload switch; enable the workload and pin
+            # the exact immutable images produced by build-images.
+            & $context.PulumiPath config set catalog:apiImage $env:API_IMAGE --non-interactive
+            & $context.PulumiPath config set catalog:migratorImage $env:MIGRATOR_IMAGE --non-interactive
+            & $context.PulumiPath config set catalog:deployWorkload true --non-interactive
+
+            # Hard gate: throws and fails the job if SQL, ACR, Key Vault, the identity,
+            # the workspace, App Insights, the environment or the container app would be
+            # deleted or replaced. `pulumi up` is only reached when the preview is safe.
+            & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence -Label 'deployment-preview'
+
+            & $context.PulumiPath up --yes --non-interactive
+            if ($LASTEXITCODE -ne 0) { throw 'Pulumi update failed.' }
+
+            # Outputs carry no secrets (names and the public HTTPS URL only).
+            $outputs = & $context.PulumiPath stack output --json | ConvertFrom-Json
+            $outputs | ConvertTo-Json -Depth 10 |
+              Set-Content -LiteralPath $summaryPath -Encoding utf8NoBOM
+            "catalogUrl=$($outputs.catalogUrl)" | Add-Content $env:GITHUB_OUTPUT
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Publish deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-deploy
+          path: evidence
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------------------
+  # 5. run-migrations — main only. The Container Apps Job is the ONLY migration path;
+  #    Catalog API never calls Database.Migrate() at startup.
+  # -------------------------------------------------------------------------------
+  run-migrations:
+    name: Run Migrations
+    needs: deploy
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.migration.outputs.status }}
+      executionName: ${{ steps.migration.outputs.executionName }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install pinned Pulumi CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.pulumi.com | sh -s -- --version "$PULUMI_VERSION"
+          echo "$HOME/.pulumi/bin" >> "$GITHUB_PATH"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Execute the database migrator Container Apps Job
+        id: migration
+        shell: pwsh
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
+        run: |
+          # The script starts the job, polls until completion and throws on any status
+          # other than Succeeded, emitting only redacted diagnostic log lines.
+          $result = ./scripts/run-migrations-dev.ps1
+          New-Item -ItemType Directory -Path (Join-Path $PWD 'evidence') -Force | Out-Null
+          $result | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath (Join-Path $PWD 'evidence/migration-job.json') -Encoding utf8NoBOM
+          "jobName=$($result.JobName)" | Add-Content $env:GITHUB_OUTPUT
+          "executionName=$($result.ExecutionName)" | Add-Content $env:GITHUB_OUTPUT
+          "status=$($result.Status)" | Add-Content $env:GITHUB_OUTPUT
+
+      - name: Publish migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-migrations
+          path: evidence
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------------------
+  # 6. smoke-tests — main only, read-only GETs. Skipped automatically when migrations
+  #    fail because this job needs run-migrations to succeed.
+  # -------------------------------------------------------------------------------
+  smoke-tests:
+    name: Smoke Tests
+    needs: run-migrations
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install pinned Pulumi CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.pulumi.com | sh -s -- --version "$PULUMI_VERSION"
+          echo "$HOME/.pulumi/bin" >> "$GITHUB_PATH"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run read-only smoke tests
+        shell: pwsh
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
+        run: |
+          # The URL is discovered from the Pulumi stack output, never hardcoded.
+          # GET only: no POST, no permanent data, no Playwright.
+          $result = ./scripts/smoke-test-dev.ps1
+          New-Item -ItemType Directory -Path (Join-Path $PWD 'evidence') -Force | Out-Null
+          $result | ConvertTo-Json -Depth 6 |
+            Set-Content -LiteralPath (Join-Path $PWD 'evidence/smoke-tests.json') -Encoding utf8NoBOM
+
+      - name: Publish smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-smoke
+          path: evidence
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------------------
+  # 7. publish-evidence — consolidates every job artifact plus a run manifest.
+  #    Runs for pull requests too, so a PR keeps its preview evidence.
+  # -------------------------------------------------------------------------------
+  publish-evidence:
+    name: Publish Evidence
+    needs: [validate, infrastructure-preview, build-images, deploy, run-migrations, smoke-tests]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download job evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: evidence-*
+          path: catalog-evidence
+
+      - name: Build run manifest
+        shell: pwsh
+        env:
+          IMAGE_TAG: ${{ needs.build-images.outputs.imageTag }}
+          API_IMAGE: ${{ needs.build-images.outputs.apiImage }}
+          MIGRATOR_IMAGE: ${{ needs.build-images.outputs.migratorImage }}
+          MIGRATION_STATUS: ${{ needs.run-migrations.outputs.status }}
+          MIGRATION_RUN: ${{ needs.run-migrations.outputs.executionName }}
+          DEPLOYED_URL: ${{ needs.deploy.outputs.catalogUrl }}
+        run: |
+          New-Item -ItemType Directory -Path catalog-evidence -Force | Out-Null
+          # Run manifest. Deliberately contains no secrets, connection strings or
+          # Key Vault values - only identifiers, image references and public results.
+          $manifest = [pscustomobject]@{
+            generatedAtUtc  = [DateTimeOffset]::UtcNow.ToString('O')
+            sourceProvider  = 'github'
+            orchestrator    = 'github-actions'
+            repository      = '${{ github.repository }}'
+            ref             = '${{ github.ref }}'
+            eventName       = '${{ github.event_name }}'
+            commitSha       = '${{ github.sha }}'
+            runId           = '${{ github.run_id }}'
+            runNumber       = '${{ github.run_number }}'
+            runAttempt      = '${{ github.run_attempt }}'
+            pulumiStack     = '${{ vars.PULUMI_STACK }}'
+            pulumiBackend   = '${{ vars.PULUMI_BACKEND_URL }}'
+            azureLocation   = '${{ vars.AZURE_LOCATION }}'
+            azureAuth       = 'workload-identity-federation'
+            imageTag        = $env:IMAGE_TAG
+            apiImage        = $env:API_IMAGE
+            migratorImage   = $env:MIGRATOR_IMAGE
+            migrationRun    = $env:MIGRATION_RUN
+            migrationStatus = $env:MIGRATION_STATUS
+            deployedUrl     = $env:DEPLOYED_URL
+          }
+          $manifest | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath catalog-evidence/run-manifest.json -Encoding utf8NoBOM
+          $manifest | Format-List
+
+      - name: Publish consolidated evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-dev-deployment-evidence
+          path: catalog-evidence
