@@ -182,7 +182,12 @@ jobs:
           Push-Location ./infra/Catalog.Infrastructure
           try {
             # Preview only. No `pulumi up`, no `pulumi destroy`.
-            & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence -Label 'infrastructure-preview'
+            # Azure Container Registry is retired by the free-first profile, which does not
+            # provision it at all, so its removal is expected rather than a surprise. Every
+            # other protected type still fails the job. See docs/azure-cost-optimization.md.
+            & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence `
+              -Label 'infrastructure-preview' `
+              -AllowedDeletionTypes 'azure-native:containerregistry:Registry'
           }
           finally {
             Pop-Location
@@ -197,14 +202,23 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------------------
-  # 3. build-images — main only. Immutable tags, built on the runner because this
-  #    subscription refuses ACR Tasks (TasksOperationsNotAllowed).
+  # 3. build-images — main only. Images live in GitHub Container Registry, which is free
+  #    for public packages, instead of Azure Container Registry, which costs a fixed
+  #    monthly amount whether or not anything pulls from it.
+  #
+  #    This job also guarantees the ordering the ACR retirement depends on: the packages
+  #    are pushed, made public, and an ANONYMOUS pull is proven to work before `deploy`
+  #    is allowed to run. `deploy` is what removes ACR, so a failure here leaves it alive.
   # -------------------------------------------------------------------------------
   build-images:
     name: Build Images
     needs: infrastructure-preview
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
     outputs:
       apiImage: ${{ steps.images.outputs.apiImage }}
       migratorImage: ${{ steps.images.outputs.migratorImage }}
@@ -212,48 +226,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-
-      - name: Install pinned Pulumi CLI
-        run: |
-          set -euo pipefail
-          curl -fsSL https://get.pulumi.com | sh -s -- --version "$PULUMI_VERSION"
-          echo "$HOME/.pulumi/bin" >> "$GITHUB_PATH"
-
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Build and lock immutable ACR images
+      - name: Build and publish public GHCR images
         id: images
         shell: pwsh
         env:
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
-          CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
+          # GITHUB_TOKEN is enough to push and expires with the job, so no personal access
+          # token is created and no standing registry credential exists.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
         run: |
-          $context = ./scripts/bootstrap-pulumi.ps1 -PassThru
-          Push-Location ./infra/Catalog.Infrastructure
-          try {
-            # Registry coordinates come from Pulumi stack outputs, never hardcoded.
-            $registry = & $context.PulumiPath stack output containerRegistryName
-            $loginServer = & $context.PulumiPath stack output containerRegistryLoginServer
-          }
-          finally {
-            Pop-Location
-          }
-
+          $owner = $env:OWNER.ToLowerInvariant()
+          $registry = "ghcr.io/$owner"
           $tag = "${{ github.run_id }}-$('${{ github.sha }}'.Substring(0, 12))"
 
-          # ACR Tasks (`az acr build`) is refused for this subscription with
-          # TasksOperationsNotAllowed, so the runner's own Docker daemon builds the images.
-          # Pushing uses an Entra token from the OIDC login: the registry keeps its admin
-          # user disabled and no registry credential exists anywhere.
-          az acr login --name $registry
-          if ($LASTEXITCODE -ne 0) { throw 'Could not authenticate to the container registry.' }
+          $env:GITHUB_TOKEN | docker login ghcr.io --username '${{ github.actor }}' --password-stdin
+          if ($LASTEXITCODE -ne 0) { throw 'Could not authenticate to ghcr.io.' }
 
           $images = @(
             @{ Repository = 'catalog-api';               Dockerfile = 'Dockerfile' }
@@ -261,31 +248,54 @@ jobs:
           )
 
           foreach ($image in $images) {
-            $reference = "$loginServer/$($image.Repository):$tag"
-
-            # Tags are locked after the first push, so re-running the same run must reuse
-            # the existing image instead of failing against an immutable tag.
-            az acr repository show --name $registry --image "$($image.Repository):$tag" --output none 2>$null
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "$reference already exists and is immutable; reusing it."
-              continue
-            }
+            $reference = "$registry/$($image.Repository):$tag"
 
             docker build --platform linux/amd64 --file $image.Dockerfile --tag $reference .
             if ($LASTEXITCODE -ne 0) { throw "$($image.Repository) image build failed." }
 
             docker push $reference
             if ($LASTEXITCODE -ne 0) { throw "$($image.Repository) image push failed." }
-
-            # Lock the tag so a later run can never repoint it to different content.
-            az acr repository update --name $registry --image "$($image.Repository):$tag" `
-              --write-enabled false --delete-enabled false --output none
-            if ($LASTEXITCODE -ne 0) { throw "$($image.Repository) tag could not be made immutable." }
           }
 
           "imageTag=$tag" | Add-Content $env:GITHUB_OUTPUT
-          "apiImage=$loginServer/catalog-api:$tag" | Add-Content $env:GITHUB_OUTPUT
-          "migratorImage=$loginServer/catalog-database-migrator:$tag" | Add-Content $env:GITHUB_OUTPUT
+          "apiImage=$registry/catalog-api:$tag" | Add-Content $env:GITHUB_OUTPUT
+          "migratorImage=$registry/catalog-database-migrator:$tag" | Add-Content $env:GITHUB_OUTPUT
+
+      - name: Make the packages public
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Container Apps pulls anonymously, which is only possible while the package is
+          # public. A GHCR package is private by default even when its repository is
+          # public, so visibility has to be set explicitly after the first push.
+          foreach ($package in 'catalog-api', 'catalog-database-migrator') {
+            gh api --method PATCH "orgs/${{ github.repository_owner }}/packages/container/$package" `
+              -f visibility=public 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::warning::Could not set '$package' visibility automatically; the anonymous pull check below is what actually decides."
+            }
+          }
+
+      - name: Verify an anonymous pull works
+        shell: pwsh
+        env:
+          API_IMAGE: ${{ steps.images.outputs.apiImage }}
+          MIGRATOR_IMAGE: ${{ steps.images.outputs.migratorImage }}
+        run: |
+          # This is the gate that protects the ACR retirement. Azure Container Apps pulls
+          # these images with no credential at all, so if an unauthenticated client cannot
+          # pull them, neither can Azure - and `deploy` must not proceed to delete ACR.
+          docker logout ghcr.io | Out-Null
+
+          foreach ($reference in $env:API_IMAGE, $env:MIGRATOR_IMAGE) {
+            docker pull $reference
+            if ($LASTEXITCODE -ne 0) {
+              throw "Anonymous pull of '$reference' failed. Azure Container Apps would not be able to pull it either, so the deployment is stopped before Azure Container Registry is removed. Make the GHCR package public and re-run."
+            }
+
+            Write-Host "Anonymous pull of '$reference' succeeded."
+          }
 
   # -------------------------------------------------------------------------------
   # 4. deploy — main only. Updates the EXISTING stack; creates nothing in parallel.
@@ -346,7 +356,11 @@ jobs:
             # Hard gate: throws and fails the job if SQL, ACR, Key Vault, the identity,
             # the workspace, App Insights, the environment or the container app would be
             # deleted or replaced. `pulumi up` is only reached when the preview is safe.
-            & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence -Label 'deployment-preview'
+            # The registry is retired here on purpose, and only after build-images proved
+            # an anonymous GHCR pull works. Every other protected type still fails the job.
+            & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence `
+              -Label 'deployment-preview' `
+              -AllowedDeletionTypes 'azure-native:containerregistry:Registry'
 
             & $context.PulumiPath up --yes --non-interactive
             if ($LASTEXITCODE -ne 0) { throw 'Pulumi update failed.' }

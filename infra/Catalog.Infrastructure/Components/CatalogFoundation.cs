@@ -2,6 +2,7 @@ using Pulumi;
 using Pulumi.AzureNative.App;
 using Pulumi.AzureNative.ApplicationInsights;
 using Pulumi.AzureNative.ContainerRegistry;
+using Pulumi.AzureNative.CostManagement;
 using Pulumi.AzureNative.KeyVault;
 using Pulumi.AzureNative.ManagedIdentity;
 using Pulumi.AzureNative.Network;
@@ -12,6 +13,7 @@ using Pulumi.AzureNative.Sql;
 using AppInputs = Pulumi.AzureNative.App.Inputs;
 using ApplicationInsightsInputs = Pulumi.AzureNative.ApplicationInsights.Inputs;
 using ContainerRegistryInputs = Pulumi.AzureNative.ContainerRegistry.Inputs;
+using CostManagementInputs = Pulumi.AzureNative.CostManagement.Inputs;
 using KeyVaultInputs = Pulumi.AzureNative.KeyVault.Inputs;
 using NetworkInputs = Pulumi.AzureNative.Network.Inputs;
 using OperationalInsightsInputs = Pulumi.AzureNative.OperationalInsights.Inputs;
@@ -86,24 +88,30 @@ internal sealed class CatalogFoundation : ComponentResource
             },
             childOptions);
 
-        ContainerRegistry = new Registry(
-            "catalog-registry",
-            new RegistryArgs
-            {
-                ResourceGroupName = ResourceGroup.Name,
-                RegistryName = args.Names.ContainerRegistry,
-                Location = ResourceGroup.Location,
-                AdminUserEnabled = false,
-                AnonymousPullEnabled = false,
-                PublicNetworkAccess = "Enabled",
-                NetworkRuleBypassOptions = "AzureServices",
-                Sku = new ContainerRegistryInputs.SkuArgs
+        // ACR Basic costs a fixed monthly amount whether or not an image is ever pulled.
+        // Under the free-first profile images live in GitHub Container Registry instead,
+        // which is free for public packages and needs no credential to pull.
+        if (!args.FreeFirst)
+        {
+            ContainerRegistry = new Registry(
+                "catalog-registry",
+                new RegistryArgs
                 {
-                    Name = "Basic",
+                    ResourceGroupName = ResourceGroup.Name,
+                    RegistryName = args.Names.ContainerRegistry,
+                    Location = ResourceGroup.Location,
+                    AdminUserEnabled = false,
+                    AnonymousPullEnabled = false,
+                    PublicNetworkAccess = "Enabled",
+                    NetworkRuleBypassOptions = "AzureServices",
+                    Sku = new ContainerRegistryInputs.SkuArgs
+                    {
+                        Name = "Basic",
+                    },
+                    Tags = args.Tags,
                 },
-                Tags = args.Tags,
-            },
-            childOptions);
+                childOptions);
+        }
 
         LogAnalytics = new Workspace(
             "catalog-log-analytics",
@@ -118,6 +126,14 @@ internal sealed class CatalogFoundation : ComponentResource
                 Sku = new OperationalInsightsInputs.WorkspaceSkuArgs
                 {
                     Name = "PerGB2018",
+                },
+                // The workspace has a 5 GB/month free grant and nothing stops ingestion
+                // once it is spent. A daily cap turns a silent overage into dropped
+                // telemetry, which is the correct failure mode for a POC.
+                WorkspaceCapping = new OperationalInsightsInputs.WorkspaceCappingArgs
+                {
+                    // -1 is Azure's "no cap".
+                    DailyQuotaGb = args.FreeFirst ? 0.1 : -1,
                 },
                 Tags = args.Tags,
             },
@@ -138,7 +154,9 @@ internal sealed class CatalogFoundation : ComponentResource
                 PublicNetworkAccessForIngestion = "Enabled",
                 PublicNetworkAccessForQuery = "Enabled",
                 RetentionInDays = 30,
-                SamplingPercentage = 100,
+                // 100% sampling maximises the chance of leaving the free grant. A POC
+                // needs representative telemetry, not every single request.
+                SamplingPercentage = args.FreeFirst ? 25 : 100,
                 WorkspaceResourceId = LogAnalytics.Id,
                 Tags = args.Tags,
             },
@@ -195,107 +213,173 @@ internal sealed class CatalogFoundation : ComponentResource
                 AdministratorLogin = args.SqlAdminLogin,
                 AdministratorLoginPassword = args.SqlAdminPassword,
                 MinimalTlsVersion = "1.2",
-                PublicNetworkAccess = "Disabled",
+                // A Private Endpoint costs roughly $7/month permanently to demonstrate a
+                // topology this POC is not demonstrating. Under free-first the server is
+                // reachable over its public endpoint but only from Azure services (see the
+                // firewall rule below), still TLS 1.2 minimum, still Key Vault credentials.
+                PublicNetworkAccess = args.FreeFirst ? "Enabled" : "Disabled",
                 RestrictOutboundNetworkAccess = "Enabled",
                 Version = "12.0",
                 Tags = args.Tags,
             },
             childOptions);
 
-        SqlDatabase = new Database(
-            "catalog-sql-database",
-            new DatabaseArgs
-            {
-                ResourceGroupName = ResourceGroup.Name,
-                ServerName = SqlServer.Name,
-                DatabaseName = args.Names.SqlDatabase,
-                Location = args.SqlLocation,
-                MaxSizeBytes = 2_147_483_648,
-                RequestedBackupStorageRedundancy = "Local",
-                Sku = new SqlInputs.SkuArgs
+        if (args.FreeFirst)
+        {
+            // The 0.0.0.0-0.0.0.0 rule is Azure's documented "allow Azure services"
+            // switch, not an open-internet rule: it admits traffic originating from Azure
+            // and rejects everything else. It is NOT equivalent to a Private Endpoint -
+            // it trusts any Azure tenant, not just this subscription - and production
+            // should restore the private endpoint. Container Apps Consumption has no
+            // stable outbound IP to allowlist, so there is no narrower option here.
+            _ = new FirewallRule(
+                "catalog-sql-allow-azure-services",
+                new FirewallRuleArgs
                 {
-                    Name = args.SqlDatabaseSku,
-                    Tier = args.SqlDatabaseSku,
+                    ResourceGroupName = ResourceGroup.Name,
+                    ServerName = SqlServer.Name,
+                    FirewallRuleName = "AllowAllWindowsAzureIps",
+                    StartIpAddress = "0.0.0.0",
+                    EndIpAddress = "0.0.0.0",
                 },
-                Tags = args.Tags,
-            },
-            childOptions);
+                childOptions);
+        }
 
-        SqlPrivateDnsZone = new PrivateZone(
-            "catalog-sql-private-dns-zone",
-            new PrivateZoneArgs
-            {
-                ResourceGroupName = ResourceGroup.Name,
-                PrivateZoneName = "privatelink.database.windows.net",
-                Location = "global",
-                Tags = args.Tags,
-            },
-            childOptions);
-
-        _ = new VirtualNetworkLink(
-            "catalog-sql-private-dns-vnet-link",
-            new VirtualNetworkLinkArgs
-            {
-                ResourceGroupName = ResourceGroup.Name,
-                PrivateZoneName = SqlPrivateDnsZone.Name,
-                VirtualNetworkLinkName = "catalog-vnet-link",
-                Location = "global",
-                RegistrationEnabled = false,
-                VirtualNetwork = new PrivateDnsInputs.SubResourceArgs
+        // Azure SQL Database free offer: General Purpose Serverless Gen5 2 vCore, 32 GB,
+        // auto-pause, with a free monthly allowance. It removes the only remaining fixed
+        // compute charge in this stack.
+        //
+        // The catch: `useFreeLimit` is settable only at CREATION. Turning it on for the
+        // existing database means Pulumi replaces it, which destroys the data. That is why
+        // it sits behind its own opt-in flag and is NOT part of the free-first default -
+        // "free" must never silently mean "deleted". Enabling it is an operator decision,
+        // taken with a backup in hand. Only one free database is allowed per subscription.
+        SqlDatabase = args.SqlUseFreeOffer
+            ? new Database(
+                "catalog-sql-database",
+                new DatabaseArgs
                 {
-                    Id = VirtualNetwork.Id,
-                },
-                Tags = args.Tags,
-            },
-            childOptions);
-
-        SqlPrivateEndpoint = new PrivateEndpoint(
-            "catalog-sql-private-endpoint",
-            new PrivateEndpointArgs
-            {
-                ResourceGroupName = ResourceGroup.Name,
-                PrivateEndpointName = args.Names.SqlPrivateEndpoint,
-                Location = ResourceGroup.Location,
-                Subnet = new NetworkInputs.SubnetArgs
-                {
-                    Id = PrivateEndpointsSubnet.Id,
-                },
-                PrivateLinkServiceConnections =
-                [
-                    new NetworkInputs.PrivateLinkServiceConnectionArgs
+                    ResourceGroupName = ResourceGroup.Name,
+                    ServerName = SqlServer.Name,
+                    DatabaseName = args.Names.SqlDatabase,
+                    Location = args.SqlLocation,
+                    MaxSizeBytes = 34_359_738_368,
+                    RequestedBackupStorageRedundancy = "Local",
+                    Sku = new SqlInputs.SkuArgs
                     {
-                        Name = "catalog-sql",
-                        PrivateLinkServiceId = SqlServer.Id,
-                        GroupIds = ["sqlServer"],
-                        PrivateLinkServiceConnectionState =
-                            new NetworkInputs.PrivateLinkServiceConnectionStateArgs
-                            {
-                                Status = "Approved",
-                                Description = "Catalog Container Apps private SQL access.",
-                            },
+                        Name = "GP_S_Gen5",
+                        Tier = "GeneralPurpose",
+                        Family = "Gen5",
+                        Capacity = 2,
                     },
-                ],
-                Tags = args.Tags,
-            },
-            childOptions);
-
-        _ = new PrivateDnsZoneGroup(
-            "catalog-sql-private-dns-zone-group",
-            new PrivateDnsZoneGroupArgs
-            {
-                ResourceGroupName = ResourceGroup.Name,
-                PrivateEndpointName = SqlPrivateEndpoint.Name,
-                PrivateDnsZoneGroupName = "default",
-                PrivateDnsZoneConfigs =
-                [
-                    new NetworkInputs.PrivateDnsZoneConfigArgs
+                    AutoPauseDelay = 60,
+                    MinCapacity = 0.5,
+                    UseFreeLimit = true,
+                    FreeLimitExhaustionBehavior = "AutoPause",
+                    Tags = args.Tags,
+                },
+                childOptions)
+            : new Database(
+                "catalog-sql-database",
+                new DatabaseArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    ServerName = SqlServer.Name,
+                    DatabaseName = args.Names.SqlDatabase,
+                    Location = args.SqlLocation,
+                    MaxSizeBytes = 2_147_483_648,
+                    RequestedBackupStorageRedundancy = "Local",
+                    Sku = new SqlInputs.SkuArgs
                     {
-                        Name = "sql",
-                        PrivateDnsZoneId = SqlPrivateDnsZone.Id,
+                        Name = args.SqlDatabaseSku,
+                        Tier = args.SqlDatabaseSku,
                     },
-                ],
-            },
-            childOptions);
+                    Tags = args.Tags,
+                },
+                childOptions);
+
+        // The private endpoint, its private DNS zone, the zone's VNet link and the zone
+        // group exist solely to reach Azure SQL privately. They are a permanent fixed cost
+        // and are not provisioned under the free-first profile. The VNet and its subnets
+        // stay: they are free, and the Container Apps environment is integrated with them.
+        if (!args.FreeFirst)
+        {
+            SqlPrivateDnsZone = new PrivateZone(
+                "catalog-sql-private-dns-zone",
+                new PrivateZoneArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    PrivateZoneName = "privatelink.database.windows.net",
+                    Location = "global",
+                    Tags = args.Tags,
+                },
+                childOptions);
+
+            _ = new VirtualNetworkLink(
+                "catalog-sql-private-dns-vnet-link",
+                new VirtualNetworkLinkArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    PrivateZoneName = SqlPrivateDnsZone.Name,
+                    VirtualNetworkLinkName = "catalog-vnet-link",
+                    Location = "global",
+                    RegistrationEnabled = false,
+                    VirtualNetwork = new PrivateDnsInputs.SubResourceArgs
+                    {
+                        Id = VirtualNetwork.Id,
+                    },
+                    Tags = args.Tags,
+                },
+                childOptions);
+
+            SqlPrivateEndpoint = new PrivateEndpoint(
+                "catalog-sql-private-endpoint",
+                new PrivateEndpointArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    PrivateEndpointName = args.Names.SqlPrivateEndpoint,
+                    Location = ResourceGroup.Location,
+                    Subnet = new NetworkInputs.SubnetArgs
+                    {
+                        Id = PrivateEndpointsSubnet.Id,
+                    },
+                    PrivateLinkServiceConnections =
+                    [
+                        new NetworkInputs.PrivateLinkServiceConnectionArgs
+                        {
+                            Name = "catalog-sql",
+                            PrivateLinkServiceId = SqlServer.Id,
+                            GroupIds = ["sqlServer"],
+                            PrivateLinkServiceConnectionState =
+                                new NetworkInputs.PrivateLinkServiceConnectionStateArgs
+                                {
+                                    Status = "Approved",
+                                    Description = "Catalog Container Apps private SQL access.",
+                                },
+                        },
+                    ],
+                    Tags = args.Tags,
+                },
+                childOptions);
+
+            _ = new PrivateDnsZoneGroup(
+                "catalog-sql-private-dns-zone-group",
+                new PrivateDnsZoneGroupArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    PrivateEndpointName = SqlPrivateEndpoint.Name,
+                    PrivateDnsZoneGroupName = "default",
+                    PrivateDnsZoneConfigs =
+                    [
+                        new NetworkInputs.PrivateDnsZoneConfigArgs
+                        {
+                            Name = "sql",
+                            PrivateDnsZoneId = SqlPrivateDnsZone.Id,
+                        },
+                    ],
+                },
+                childOptions);
+        }
 
         var workspaceKeys = GetSharedKeys.Invoke(
             new GetSharedKeysInvokeArgs
@@ -360,9 +444,47 @@ internal sealed class CatalogFoundation : ComponentResource
             },
             childOptions);
 
+        // A budget costs nothing and is the only thing that will actually tell someone the
+        // POC started spending. Scoped to this resource group rather than the subscription
+        // so it cannot be confused with unrelated spend. Skipped when no contact address is
+        // configured, because a budget nobody is notified about is decoration.
+        if (!string.IsNullOrWhiteSpace(args.BudgetContactEmail))
+        {
+            var thresholds = new[] { 50.0, 80.0, 100.0 };
+            var notifications = thresholds.ToDictionary(
+                threshold => $"actual-{threshold:0}-percent",
+                threshold => new CostManagementInputs.NotificationArgs
+                {
+                    Enabled = true,
+                    Operator = "GreaterThanOrEqualTo",
+                    Threshold = threshold,
+                    ThresholdType = "Actual",
+                    ContactEmails = [args.BudgetContactEmail!],
+                });
+
+            _ = new Budget(
+                "catalog-budget",
+                new BudgetArgs
+                {
+                    Scope = ResourceGroup.Id,
+                    BudgetName = "catalog-poc-monthly",
+                    Amount = args.BudgetAmountUsd,
+                    Category = "Cost",
+                    TimeGrain = "Monthly",
+                    TimePeriod = new CostManagementInputs.BudgetTimePeriodArgs
+                    {
+                        StartDate = args.BudgetStartDate,
+                    },
+                    Notifications = notifications,
+                },
+                childOptions);
+        }
+
         KeyVaultSecretUrl = Output.Format(
             $"https://{args.Names.KeyVault}.vault.azure.net/secrets/catalog-db");
-        ContainerRegistryLoginServer = Output.Format($"{args.Names.ContainerRegistry}.azurecr.io");
+        ContainerRegistryLoginServer = ContainerRegistry is null
+            ? null
+            : Output.Format($"{args.Names.ContainerRegistry}.azurecr.io");
 
         RegisterOutputs(
             new Dictionary<string, object?>
@@ -384,7 +506,8 @@ internal sealed class CatalogFoundation : ComponentResource
 
     public Subnet PrivateEndpointsSubnet { get; }
 
-    public Registry ContainerRegistry { get; }
+    /// <summary>Null under the free-first profile; images come from GHCR instead.</summary>
+    public Registry? ContainerRegistry { get; }
 
     public Workspace LogAnalytics { get; }
 
@@ -398,9 +521,11 @@ internal sealed class CatalogFoundation : ComponentResource
 
     public Database SqlDatabase { get; }
 
-    public PrivateZone SqlPrivateDnsZone { get; }
+    /// <summary>Null under the free-first profile; the private endpoint is not created.</summary>
+    public PrivateZone? SqlPrivateDnsZone { get; }
 
-    public PrivateEndpoint SqlPrivateEndpoint { get; }
+    /// <summary>Null under the free-first profile; SQL is reached over its public endpoint.</summary>
+    public PrivateEndpoint? SqlPrivateEndpoint { get; }
 
     public ManagedEnvironment ContainerAppsEnvironment { get; }
 
@@ -408,7 +533,8 @@ internal sealed class CatalogFoundation : ComponentResource
 
     public Output<string> KeyVaultSecretUrl { get; }
 
-    public Output<string> ContainerRegistryLoginServer { get; }
+    /// <summary>Null under the free-first profile; images come from GHCR instead.</summary>
+    public Output<string>? ContainerRegistryLoginServer { get; }
 }
 
 internal sealed record CatalogFoundationArgs(
@@ -419,4 +545,9 @@ internal sealed record CatalogFoundationArgs(
     string SqlAdminLogin,
     Output<string> SqlAdminPassword,
     string SqlDatabaseSku,
+    bool FreeFirst,
+    bool SqlUseFreeOffer,
+    string? BudgetContactEmail,
+    double BudgetAmountUsd,
+    string BudgetStartDate,
     InputMap<string> Tags);

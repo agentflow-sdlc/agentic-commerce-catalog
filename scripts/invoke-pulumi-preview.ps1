@@ -24,7 +24,12 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'RunPreview')][string]$PulumiPath,
     [Parameter(Mandatory, ParameterSetName = 'RunPreview')][string]$EvidencePath,
     [Parameter(Mandatory, ParameterSetName = 'Analyze')][string]$PreviewJsonPath,
-    [string]$Label = 'preview'
+    [string]$Label = 'preview',
+
+    # Protected types whose removal is intended by the current change. Retiring a paid
+    # resource is a legitimate operation, but it has to be named deliberately rather than
+    # discovered in a diff, so the guard stays strict for everything not listed here.
+    [string[]]$AllowedDeletionTypes = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,7 +67,10 @@ function Get-PulumiResourceType {
 }
 
 function Get-ProtectedResourceViolation {
-    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Steps)
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Steps,
+        [AllowEmptyCollection()][string[]]$Allowed = @()
+    )
 
     $violations = @()
     foreach ($step in $Steps) {
@@ -71,9 +79,16 @@ function Get-ProtectedResourceViolation {
         }
 
         $leafType = Get-PulumiResourceType -Urn ([string]$step.urn)
-        if ($leafType -in $script:ProtectedTypes) {
-            $violations += "[$($step.op)] $leafType -> $($step.urn)"
+        if ($leafType -notin $script:ProtectedTypes) {
+            continue
         }
+
+        if ($leafType -in $Allowed) {
+            Write-Host "  allowed removal: [$($step.op)] $leafType -> $($step.urn)"
+            continue
+        }
+
+        $violations += "[$($step.op)] $leafType -> $($step.urn)"
     }
 
     return $violations
@@ -123,7 +138,7 @@ foreach ($step in $changed) {
 
 # @() keeps an empty result an array; PowerShell would otherwise unwrap it to $null and
 # Set-StrictMode would fail on .Count.
-$violations = @(Get-ProtectedResourceViolation -Steps $steps)
+$violations = @(Get-ProtectedResourceViolation -Steps $steps -Allowed $AllowedDeletionTypes)
 if ($violations.Count -gt 0) {
     Write-Host '##vso[task.logissue type=error]Pulumi preview proposes destroying protected Catalog infrastructure.'
     $violations | ForEach-Object { Write-Host "##vso[task.logissue type=error]$_" }
