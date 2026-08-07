@@ -19,13 +19,18 @@ internal sealed class CatalogWorkload : ComponentResource
     {
         var childOptions = new CustomResourceOptions { Parent = this };
 
-        var acrPull = CreateRoleAssignment(
-            "catalog-acr-pull",
-            args.Foundation.ContainerRegistry.Id,
-            args.Foundation.ManagedIdentity.PrincipalId,
-            args.SubscriptionId,
-            AcrPullRoleId,
-            childOptions);
+        // Only meaningful when an Azure Container Registry exists. Under the free-first
+        // profile images are pulled anonymously from public GHCR packages, so there is
+        // nothing to grant AcrPull on and no registry credential to hold.
+        var acrPull = args.Foundation.ContainerRegistry is null
+            ? null
+            : CreateRoleAssignment(
+                "catalog-acr-pull",
+                args.Foundation.ContainerRegistry.Id,
+                args.Foundation.ManagedIdentity.PrincipalId,
+                args.SubscriptionId,
+                AcrPullRoleId,
+                childOptions);
 
         var keyVaultSecretsUser = CreateRoleAssignment(
             "catalog-key-vault-secrets-user",
@@ -49,11 +54,30 @@ internal sealed class CatalogWorkload : ComponentResource
             UserAssignedIdentities = [args.Foundation.ManagedIdentity.Id],
         };
 
-        var registry = new AppInputs.RegistryCredentialsArgs
+        // Empty when pulling public GHCR images: Container Apps pulls anonymously, so no
+        // registry credential, no personal access token and no stored secret are needed.
+        var registries = args.Foundation.ContainerRegistryLoginServer is null
+            ? Array.Empty<AppInputs.RegistryCredentialsArgs>()
+            :
+            [
+                new AppInputs.RegistryCredentialsArgs
+                {
+                    Server = args.Foundation.ContainerRegistryLoginServer,
+                    Identity = args.Foundation.ManagedIdentity.Id,
+                },
+            ];
+
+        var dependencies = new List<Resource>
         {
-            Server = args.Foundation.ContainerRegistryLoginServer,
-            Identity = args.Foundation.ManagedIdentity.Id,
+            keyVaultSecretsUser,
+            monitoringPublisher,
+            args.Foundation.DatabaseConnectionSecret,
         };
+
+        if (acrPull is not null)
+        {
+            dependencies.Add(acrPull);
+        }
 
         var databaseSecret = new AppInputs.SecretArgs
         {
@@ -88,7 +112,7 @@ internal sealed class CatalogWorkload : ComponentResource
                 Configuration = new AppInputs.ConfigurationArgs
                 {
                     ActiveRevisionsMode = "Single",
-                    Registries = [registry],
+                    Registries = registries,
                     Secrets = [databaseSecret],
                     Ingress = new AppInputs.IngressArgs
                     {
@@ -140,13 +164,7 @@ internal sealed class CatalogWorkload : ComponentResource
             new CustomResourceOptions
             {
                 Parent = this,
-                DependsOn =
-                [
-                    acrPull,
-                    keyVaultSecretsUser,
-                    monitoringPublisher,
-                    args.Foundation.DatabaseConnectionSecret,
-                ],
+                DependsOn = dependencies.ToArray(),
             });
 
         DatabaseMigratorJob = new Job(
@@ -161,7 +179,7 @@ internal sealed class CatalogWorkload : ComponentResource
                 Configuration = new AppInputs.JobConfigurationArgs
                 {
                     TriggerType = "Manual",
-                    Registries = [registry],
+                    Registries = registries,
                     Secrets = [databaseSecret],
                     ReplicaRetryLimit = 1,
                     ReplicaTimeout = 600,
@@ -193,12 +211,11 @@ internal sealed class CatalogWorkload : ComponentResource
             new CustomResourceOptions
             {
                 Parent = this,
-                DependsOn =
-                [
-                    acrPull,
-                    keyVaultSecretsUser,
-                    args.Foundation.DatabaseConnectionSecret,
-                ],
+                // The job does not publish metrics, so it needs the same dependencies
+                // minus the monitoring role assignment.
+                DependsOn = dependencies
+                    .Where(dependency => dependency != monitoringPublisher)
+                    .ToArray(),
             });
 
         CatalogUrl = CatalogApi.Configuration.Apply(configuration =>
