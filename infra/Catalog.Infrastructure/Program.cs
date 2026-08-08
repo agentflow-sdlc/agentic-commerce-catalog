@@ -34,6 +34,10 @@ return await Deployment.RunAsync(async () =>
     // Opt-in and deliberately NOT implied by the free-first profile: the Azure SQL free
     // offer can only be set when a database is created, so enabling it replaces the
     // existing database and destroys its data.
+    // A private endpoint is the only way to keep Azure SQL off the public network here,
+    // and it costs roughly $7/month, so it stays an explicit opt-in rather than part of
+    // the free path. Without it the server needs a firewall rule open to all of Azure.
+    var sqlPrivateEndpoint = catalogConfig.GetBoolean("sqlPrivateEndpoint") ?? false;
     var sqlUseFreeOffer = catalogConfig.GetBoolean("sqlUseFreeOffer") ?? false;
 
     // Cost alerting. Without a contact address no budget is created, because a budget
@@ -64,6 +68,7 @@ return await Deployment.RunAsync(async () =>
             sqlAdminPassword,
             sqlDatabaseSku,
             freeFirst,
+            sqlPrivateEndpoint,
             sqlUseFreeOffer,
             budgetContactEmail,
             budgetAmountUsd,
@@ -90,6 +95,7 @@ return await Deployment.RunAsync(async () =>
         ["sqlLocation"] = sqlLocation,
         ["costProfile"] = costProfile,
         ["allowPaidResources"] = allowPaidResources,
+        ["sqlPrivateEndpoint"] = sqlPrivateEndpoint,
         ["resourceGroupName"] = foundation.ResourceGroup.Name,
         // Null under the free-first profile: images come from GitHub Container Registry,
         // so no Azure Container Registry is provisioned and nothing pays for one.

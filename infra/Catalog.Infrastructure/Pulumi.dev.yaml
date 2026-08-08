@@ -11,6 +11,7 @@ config:
   catalog:costProfile: poc-free
   catalog:allowPaidResources: "false"
   catalog:sqlUseFreeOffer: "true"
+  catalog:sqlPrivateEndpoint: "true"
   catalog:budgetContactEmail: emanuelabr22@gmail.com
   catalog:budgetAmountUsd: "10"
   catalog:apiImage: ghcr.io/agentflow-sdlc/catalog-api:31196570338-3be933568b9d

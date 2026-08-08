@@ -32,6 +32,12 @@ internal sealed class CatalogFoundation : ComponentResource
     {
         var childOptions = new CustomResourceOptions { Parent = this };
 
+        // Private access to Azure SQL: implied by the full profile, and available to
+        // free-first as a paid opt-in. It decides three things that must agree - whether
+        // the endpoint exists, whether the server accepts public traffic, and whether the
+        // firewall rule that would otherwise admit all of Azure is created.
+        var usePrivateEndpoint = !args.FreeFirst || args.SqlPrivateEndpoint;
+
         ResourceGroup = new ResourceGroup(
             "catalog-resource-group",
             new ResourceGroupArgs
@@ -220,7 +226,7 @@ internal sealed class CatalogFoundation : ComponentResource
                 // topology this POC is not demonstrating. Under free-first the server keeps
                 // its public endpoint, but the virtual network rule below admits only the
                 // Container Apps subnet, still TLS 1.2 minimum, still Key Vault credentials.
-                PublicNetworkAccess = args.FreeFirst ? "Enabled" : "Disabled",
+                PublicNetworkAccess = usePrivateEndpoint ? "Disabled" : "Enabled",
                 RestrictOutboundNetworkAccess = "Enabled",
                 Version = "12.0",
                 Tags = args.Tags,
@@ -295,10 +301,18 @@ internal sealed class CatalogFoundation : ComponentResource
                 childOptions);
 
         // The private endpoint, its private DNS zone, the zone's VNet link and the zone
-        // group exist solely to reach Azure SQL privately. They are a permanent fixed cost
-        // and are not provisioned under the free-first profile. The VNet and its subnets
-        // stay: they are free, and the Container Apps environment is integrated with them.
-        if (!args.FreeFirst)
+        // group exist solely to reach Azure SQL privately. They are a permanent fixed cost,
+        // roughly $7/month, so free-first omits them by default. The VNet and its subnets
+        // stay either way: they are free, and the environment is integrated with them.
+        //
+        // catalog:sqlPrivateEndpoint turns them back on without leaving free-first, which
+        // matters because the alternative is the 0.0.0.0 firewall rule admitting every
+        // Azure tenant. It is the only way to close that off here: an egress allowlist
+        // fails because Container Apps uses several addresses, and a virtual network rule
+        // requires one region for both the server and the network. A private endpoint has
+        // neither restriction - the endpoint lives in this eastus2 network and reaches the
+        // server in centralus, which is where the free serverless offer is available.
+        if (usePrivateEndpoint)
         {
             SqlPrivateDnsZone = new PrivateZone(
                 "catalog-sql-private-dns-zone",
@@ -415,11 +429,13 @@ internal sealed class CatalogFoundation : ComponentResource
             },
             childOptions);
 
-        if (args.FreeFirst)
+        if (!usePrivateEndpoint)
         {
-            // This admits every Azure tenant, so the admin password is the only barrier for
-            // anyone able to start a VM. It stays because both narrower forms are blocked,
-            // and the measurements are recorded so nobody retries them from scratch:
+            // Reached only when the public endpoint is the sole way in, so something has to
+            // admit the workload. This admits every Azure tenant, leaving the admin
+            // password as the only barrier for anyone able to start a VM. Both narrower
+            // forms are blocked here, and the measurements are recorded so nobody retries
+            // them from scratch:
             //
             // Allowlisting the environment's address does not work. Container Apps
             // Consumption egresses from more than one address: with only StaticIp
@@ -434,9 +450,7 @@ internal sealed class CatalogFoundation : ComponentResource
             // serverless is what the free offer needs. Colocating everything in centralus
             // would make it legal, at the cost of recreating the environment and its URL.
             //
-            // ponytail: the remaining upgrades both cost something - a Private Endpoint at
-            // roughly $7/month, or the move to centralus above. Deliberate decisions, not
-            // cleanup, so neither is taken here.
+            // The way out is catalog:sqlPrivateEndpoint, which removes this branch entirely.
             _ = new FirewallRule(
                 "catalog-sql-allow-azure-services",
                 new FirewallRuleArgs
@@ -577,6 +591,7 @@ internal sealed record CatalogFoundationArgs(
     Output<string> SqlAdminPassword,
     string SqlDatabaseSku,
     bool FreeFirst,
+    bool SqlPrivateEndpoint,
     bool SqlUseFreeOffer,
     string? BudgetContactEmail,
     double BudgetAmountUsd,
