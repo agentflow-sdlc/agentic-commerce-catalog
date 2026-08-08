@@ -185,9 +185,15 @@ jobs:
             # Azure Container Registry is retired by the free-first profile, which does not
             # provision it at all, so its removal is expected rather than a surprise. Every
             # other protected type still fails the job. See docs/azure-cost-optimization.md.
+            # sql:Database is allowed through only while the free offer lands. Azure will
+            # not convert a paid database, so the switch is a replacement. The database is
+            # empty and the migration job rebuilds it. Remove this once it has deployed:
+            # keeping it would let a later accident delete the database unchallenged.
+            # Comments must stay above this call - inside the backtick continuation they
+            # end the statement and the next argument is parsed as its own command.
             & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence `
               -Label 'infrastructure-preview' `
-              -AllowedDeletionTypes 'azure-native:containerregistry:Registry'
+              -AllowedDeletionTypes 'azure-native:containerregistry:Registry','azure-native:sql:Database'
           }
           finally {
             Pop-Location
@@ -381,9 +387,15 @@ jobs:
             # deleted or replaced. `pulumi up` is only reached when the preview is safe.
             # The registry is retired here on purpose, and only after build-images proved
             # an anonymous GHCR pull works. Every other protected type still fails the job.
+            # sql:Database is allowed through only while the free offer lands. Azure will
+            # not convert a paid database, so the switch is a replacement. The database is
+            # empty and the migration job rebuilds it. Remove this once it has deployed:
+            # keeping it would let a later accident delete the database unchallenged.
+            # Comments must stay above this call - inside the backtick continuation they
+            # end the statement and the next argument is parsed as its own command.
             & $guard -PulumiPath $context.PulumiPath -EvidencePath $evidence `
               -Label 'deployment-preview' `
-              -AllowedDeletionTypes 'azure-native:containerregistry:Registry'
+              -AllowedDeletionTypes 'azure-native:containerregistry:Registry','azure-native:sql:Database'
 
             & $context.PulumiPath up --yes --non-interactive
             if ($LASTEXITCODE -ne 0) { throw 'Pulumi update failed.' }
