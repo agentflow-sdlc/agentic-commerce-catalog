@@ -239,6 +239,20 @@ internal sealed class CatalogFoundation : ComponentResource
         // it sits behind its own opt-in flag and is NOT part of the free-first default -
         // "free" must never silently mean "deleted". Enabling it is an operator decision,
         // taken with a backup in hand. Only one free database is allowed per subscription.
+        //
+        // Do not switch this on again without first proving the free database can be
+        // created on this subscription. Both routes have been tried against dev and both
+        // failed, the second one destructively:
+        //
+        //   as an update  Status=200 ProvisioningDisabled
+        //                 "Cannot update paid database to free database."
+        //   as a creation Status=404 ResourceNotFound, reported by the provider as
+        //                 "resource created but read failed"
+        //
+        // The second attempt ran with DeleteBeforeReplace, so the Basic database was
+        // dropped and its replacement never appeared, taking the API down until the
+        // database was recreated by hand and the migration job replayed the schema.
+        // Verify the creation against a throwaway server before trusting it here.
         SqlDatabase = args.SqlUseFreeOffer
             ? new Database(
                 "catalog-sql-database",
