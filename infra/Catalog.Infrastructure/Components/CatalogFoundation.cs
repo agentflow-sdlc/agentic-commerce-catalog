@@ -73,17 +73,9 @@ internal sealed class CatalogFoundation : ComponentResource
                         ServiceName = "Microsoft.App/environments",
                     },
                 ],
-                // Carries the subnet's identity to Azure SQL so the server can admit this
-                // subnet specifically instead of every Azure tenant. Free, and unlike an
-                // outbound IP allowlist it survives Container Apps changing its egress
-                // addresses. Paired with the virtual network rule on the server below.
-                ServiceEndpoints =
-                [
-                    new NetworkInputs.ServiceEndpointPropertiesFormatArgs
-                    {
-                        Service = "Microsoft.Sql",
-                    },
-                ],
+                // No Microsoft.Sql service endpoint: it only has an effect alongside a
+                // virtual network rule on the server, which Azure refuses across regions
+                // while the server stays in centralus. See the firewall rule on the server.
             },
             childOptions);
 
@@ -235,29 +227,8 @@ internal sealed class CatalogFoundation : ComponentResource
             },
             childOptions);
 
-        if (args.FreeFirst)
-        {
-            // Admits only the subnet the Container Apps environment runs in. This replaces
-            // the 0.0.0.0-0.0.0.0 "allow Azure services" rule, which sounds narrow but
-            // admits every Azure tenant on the platform, leaving the admin password as the
-            // only barrier for anyone able to create a VM. A virtual network rule costs
-            // nothing, is not affected by Container Apps rotating its outbound addresses,
-            // and leaves the public endpoint unreachable from everywhere else.
-            //
-            // Nothing reaches the database from outside this subnet: migrations run as a
-            // Container Apps Job inside it, and the smoke tests only call the API over
-            // HTTPS. Connecting from a workstation needs a temporary rule for that address.
-            _ = new VirtualNetworkRule(
-                "catalog-sql-allow-container-apps",
-                new VirtualNetworkRuleArgs
-                {
-                    ResourceGroupName = ResourceGroup.Name,
-                    ServerName = SqlServer.Name,
-                    VirtualNetworkRuleName = "allow-container-apps-subnet",
-                    VirtualNetworkSubnetId = ContainerAppsSubnet.Id,
-                },
-                childOptions);
-        }
+        // The firewall rule that admits the workload is created after the Container Apps
+        // environment, because it allows that environment's outbound address.
 
         // Azure SQL Database free offer: General Purpose Serverless Gen5 2 vCore, 32 GB,
         // auto-pause, with a free monthly allowance. It removes the only remaining fixed
@@ -432,6 +403,38 @@ internal sealed class CatalogFoundation : ComponentResource
                 Tags = args.Tags,
             },
             childOptions);
+
+        if (args.FreeFirst)
+        {
+            // Admits only this environment's outbound address. It replaces the
+            // 0.0.0.0-0.0.0.0 rule, which reads as "allow Azure services" but admits every
+            // tenant on the platform, leaving the admin password as the only barrier for
+            // anyone able to start a VM. Verified against the live server: with this rule
+            // alone the migration job connects and the API serves /products.
+            //
+            // A virtual network rule would be the stronger form, but Azure requires the
+            // server and the network to share a region and rejects the pairing outright:
+            // the server is in centralus because this subscription offers no serverless
+            // Gen5 in eastus2, which is also what the free offer below needs. Firewall
+            // rules carry no such restriction.
+            //
+            // ponytail: this pins one address. StaticIp is stable for the life of the
+            // environment but is not contractually permanent on Consumption, so recreating
+            // the environment moves it. Pulumi reissues the rule from the same output on
+            // the next deployment, and the migration job fails loudly if it ever drifts.
+            // A Private Endpoint (~$7/month) is the upgrade that removes the coupling.
+            _ = new FirewallRule(
+                "catalog-sql-allow-container-apps",
+                new FirewallRuleArgs
+                {
+                    ResourceGroupName = ResourceGroup.Name,
+                    ServerName = SqlServer.Name,
+                    FirewallRuleName = "AllowContainerAppsEgress",
+                    StartIpAddress = ContainerAppsEnvironment.StaticIp,
+                    EndIpAddress = ContainerAppsEnvironment.StaticIp,
+                },
+                childOptions);
+        }
 
         var connectionString = Output.Tuple<string, string>(
                 SqlServer.FullyQualifiedDomainName,
