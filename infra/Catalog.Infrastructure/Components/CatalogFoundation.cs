@@ -263,7 +263,18 @@ internal sealed class CatalogFoundation : ComponentResource
                     FreeLimitExhaustionBehavior = "AutoPause",
                     Tags = args.Tags,
                 },
-                childOptions)
+                // Azure refuses to convert an existing paid database: "Cannot update paid
+                // database to free database" (ProvisioningDisabled). Pulumi plans this as
+                // an ordinary update and only finds out mid-apply, so the replacement has
+                // to be declared here. Delete first, because the replacement reuses the
+                // same database name and the two cannot coexist on the server.
+                CustomResourceOptions.Merge(
+                    childOptions,
+                    new CustomResourceOptions
+                    {
+                        ReplaceOnChanges = { "useFreeLimit" },
+                        DeleteBeforeReplace = true,
+                    }))
             : new Database(
                 "catalog-sql-database",
                 new DatabaseArgs
@@ -406,32 +417,35 @@ internal sealed class CatalogFoundation : ComponentResource
 
         if (args.FreeFirst)
         {
-            // Admits only this environment's outbound address. It replaces the
-            // 0.0.0.0-0.0.0.0 rule, which reads as "allow Azure services" but admits every
-            // tenant on the platform, leaving the admin password as the only barrier for
-            // anyone able to start a VM. Verified against the live server: with this rule
-            // alone the migration job connects and the API serves /products.
+            // This admits every Azure tenant, so the admin password is the only barrier for
+            // anyone able to start a VM. It stays because both narrower forms are blocked,
+            // and the measurements are recorded so nobody retries them from scratch:
             //
-            // A virtual network rule would be the stronger form, but Azure requires the
-            // server and the network to share a region and rejects the pairing outright:
-            // the server is in centralus because this subscription offers no serverless
-            // Gen5 in eastus2, which is also what the free offer below needs. Firewall
-            // rules carry no such restriction.
+            // Allowlisting the environment's address does not work. Container Apps
+            // Consumption egresses from more than one address: with only StaticIp
+            // (172.193.22.14) permitted, the migration job connected but the API's replicas
+            // were refused with error 40615. An API call appearing to succeed during that
+            // window was a warm connection pool, not proof - the firewall only affects new
+            // connections, so this must be tested against a fresh replica.
             //
-            // ponytail: this pins one address. StaticIp is stable for the life of the
-            // environment but is not contractually permanent on Consumption, so recreating
-            // the environment moves it. Pulumi reissues the rule from the same output on
-            // the next deployment, and the migration job fails loudly if it ever drifts.
-            // A Private Endpoint (~$7/month) is the upgrade that removes the coupling.
+            // A virtual network rule is the correct fix and Azure rejects it here: those
+            // rules require the server and the network to share a region. The server is in
+            // centralus because this subscription offers no serverless Gen5 in eastus2, and
+            // serverless is what the free offer needs. Colocating everything in centralus
+            // would make it legal, at the cost of recreating the environment and its URL.
+            //
+            // ponytail: the remaining upgrades both cost something - a Private Endpoint at
+            // roughly $7/month, or the move to centralus above. Deliberate decisions, not
+            // cleanup, so neither is taken here.
             _ = new FirewallRule(
-                "catalog-sql-allow-container-apps",
+                "catalog-sql-allow-azure-services",
                 new FirewallRuleArgs
                 {
                     ResourceGroupName = ResourceGroup.Name,
                     ServerName = SqlServer.Name,
-                    FirewallRuleName = "AllowContainerAppsEgress",
-                    StartIpAddress = ContainerAppsEnvironment.StaticIp,
-                    EndIpAddress = ContainerAppsEnvironment.StaticIp,
+                    FirewallRuleName = "AllowAllWindowsAzureIps",
+                    StartIpAddress = "0.0.0.0",
+                    EndIpAddress = "0.0.0.0",
                 },
                 childOptions);
         }
