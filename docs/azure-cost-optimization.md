@@ -45,11 +45,11 @@ NAT Gateway, Application Gateway, VPN Gateway, Bastion, Azure Firewall, standalo
 
 `emanuelabr22-0813-resource` is an `AIServices` account on SKU `S0` in `westus3`, inside `NetworkWatcherRG`. It is **not** part of the Pulumi stack, does not appear in any stack output, and nothing in this repository references it. Its naming matches the default an Azure AI Foundry portal quick-create produces.
 
-S0 for AI Services is pay-per-call, so it is not generating idle cost, which is why it is classified `REVIEW` rather than `REMOVE`. It is nevertheless outside infrastructure-as-code and outside the scope of this phase, and deleting a resource this phase did not create is not a decision to take unattended. **Recommendation:** confirm it is unused and delete it manually, or bring it under Pulumi if it is intentional.
+S0 for AI Services is pay-per-call, so it is not generating idle cost, which is why it is classified `REVIEW` rather than `REMOVE`. It is nevertheless outside infrastructure-as-code and outside the scope of this change, and deleting an unmanaged resource is not a decision to take unattended. **Recommendation:** confirm it is unused and delete it manually, or bring it under Pulumi if it is intentional.
 
 ## Container registry — ACR to GHCR
 
-ACR Basic costs a fixed monthly amount regardless of use, which is exactly the shape of cost this phase exists to remove. This repository is public, so its container packages can be public too without exposing anything that is not already public.
+ACR Basic costs a fixed monthly amount regardless of use, which is exactly the cost shape this optimization removes. This repository is public, so its container packages can be public too without exposing anything that is not already public.
 
 Public GHCR packages are pulled anonymously, which means **Azure Container Apps needs no registry credential at all**. That avoids a personal access token, avoids storing a registry secret in Key Vault, and avoids the operational burden of rotating one. `GITHUB_TOKEN` is sufficient to push during the workflow and expires when the job ends, so it never becomes a standing credential.
 
@@ -69,7 +69,7 @@ The Azure SQL Database free offer would remove that charge: General Purpose Serv
 
 **The free offer cannot be applied to an existing database.** `useFreeLimit` is settable only at creation, so adopting it means creating a new database and therefore destroying the current one.
 
-Per the constraints of this phase, **that destruction is not performed**. The code is prepared and gated behind explicit configuration, the change is not applied, and the decision is left to the operator. See `Azure SQL Free Offer status` in the pull request and the guardrail description below.
+Under the current safety constraints, **that destruction is not performed**. The code is prepared and gated behind explicit configuration, the change is not applied, and the decision is left to the operator. See `Azure SQL Free Offer status` in the pull request and the guardrail description below.
 
 Until then the database stays `Basic`, which is the cheapest non-free option available in-place, and remains the single largest residual fixed cost.
 
@@ -92,7 +92,7 @@ The private DNS zone and its VNet link are removed with the endpoint, as they ex
 
 ## Observability
 
-Application Insights is kept — the phase requires observability, not its removal. What changes is the risk of leaving the free grant:
+Application Insights is kept because observability remains required. What changes is the risk of leaving the free grant:
 
 - a **daily ingestion cap** on the Log Analytics workspace, so overage cannot happen silently;
 - Application Insights sampling reduced from 100 %;
@@ -136,11 +136,11 @@ These make Cost Management grouping possible later.
 
 ## Future capabilities — free-first strategy
 
-None of the following are created in this phase. They are recorded so the free path is chosen when they are.
+None of the following are currently created. They are recorded so the free path is chosen when they are.
 
 ### Azure Functions
 
-When the Agentic SDLC needs to receive events or webhooks, use the **Consumption** plan. It scales to zero and includes a monthly free grant of executions and GB-seconds. Do not use Premium or Dedicated plans for the POC without a demonstrated technical need — Premium keeps warm instances and therefore has a permanent idle cost, which is precisely what this phase removes.
+When the Agentic SDLC needs to receive events or webhooks, use the **Consumption** plan. It scales to zero and includes a monthly free grant of executions and GB-seconds. Do not use Premium or Dedicated plans for the POC without a demonstrated technical need — Premium keeps warm instances and therefore has a permanent idle cost that conflicts with the optimization goal.
 
 ### Azure Cosmos DB
 

@@ -56,7 +56,7 @@ Container Apps Consumption also carries a monthly free grant of vCPU-seconds, Gi
 
 The database is still `Basic`. Moving it to the free offer (General Purpose Serverless Gen5 2 vCore, 32 GB, auto-pause, free monthly limit) would remove this cost entirely.
 
-**It was not applied, on purpose.** `useFreeLimit` can only be set when a database is created, so switching means Pulumi replaces the database and **destroys its data**. This phase does not destroy persistent resources.
+**It was not applied, on purpose.** `useFreeLimit` can only be set when a database is created, so switching means Pulumi replaces the database and **destroys its data**. This change does not destroy persistent resources.
 
 The code is written and verified to compile, behind its own opt-in flag:
 
@@ -74,11 +74,11 @@ The preview guard will refuse the run unless `azure-native:sql:Database` is expl
 
 ## Future Functions strategy
 
-Not created in this phase. When the Agentic SDLC needs to receive events or webhooks, use the **Consumption** plan: it scales to zero and includes a monthly free grant of executions and GB-seconds. Premium and Dedicated plans keep instances warm and therefore reintroduce exactly the permanent idle cost this phase removed; they require a demonstrated technical need and `allowPaidResources=true`.
+Not currently created. When the Agentic SDLC needs to receive events or webhooks, use the **Consumption** plan: it scales to zero and includes a monthly free grant of executions and GB-seconds. Premium and Dedicated plans keep instances warm and therefore reintroduce permanent idle cost; they require a demonstrated technical need and `allowPaidResources=true`.
 
 ## Future Cosmos Free Tier strategy
 
-Not created in this phase. When needed, use **Azure Cosmos DB for NoSQL** with the **free tier enabled at creation**, targeting ≤ 1000 RU/s and ≤ 25 GB.
+Not currently created. When needed, use **Azure Cosmos DB for NoSQL** with the **free tier enabled at creation**, targeting ≤ 1000 RU/s and ≤ 25 GB.
 
 Two things are easy to get permanently wrong:
 
@@ -89,7 +89,7 @@ Use a **single** account for the whole POC. Planned containers — `messages`, `
 
 ## Future Foundry free-first strategy
 
-Not created in this phase. Intended split:
+Not currently created. Intended split:
 
 - **Azure AI Search / Foundry IQ** — enterprise, documentary and RAG knowledge.
 - **Graphify** — the real technical graph of the code.
