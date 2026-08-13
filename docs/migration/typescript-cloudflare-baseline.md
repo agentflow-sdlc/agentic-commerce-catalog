@@ -31,7 +31,7 @@ Cloudflare is a historical implementation baseline, not the current architecture
 
 Successful Product and Category responses used `{ data, correlationId }` envelopes. Errors used `{ error: { code, message, details }, correlationId }`. The API returned and propagated `X-Correlation-ID`; only values matching `^[A-Za-z0-9._:-]{1,128}$` were accepted.
 
-The .NET foundation deliberately changes only the health payload required for this phase: it is now the direct `{ status, service, version }` contract with status `healthy`. Product and Category contracts remain preserved but pending in OpenAPI.
+The .NET foundation deliberately changes only the required health payload: it is now the direct `{ status, service, version }` contract with status `healthy`. Product and Category contracts remain preserved but pending in OpenAPI.
 
 ## Product rules
 

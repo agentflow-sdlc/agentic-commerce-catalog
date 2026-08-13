@@ -123,5 +123,5 @@ Pull requests execute `validate` and `infrastructure-preview` only. Deployment j
 ## Out of scope
 
 - Production resources or SKUs.
-- Microsoft.Playwright external verification; this is the next phase after deployment stabilizes.
+- Microsoft.Playwright external verification after deployment stabilizes.
 - Agents, webhooks, inventory, orders, or other business capabilities.
