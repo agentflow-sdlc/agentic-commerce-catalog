@@ -117,7 +117,7 @@ With no traffic, the environment charges for:
 - Pulumi state storage — cents;
 - the platform-managed Container Apps load balancer and public IP — a residual unknown.
 
-Everything else idles at zero: no registry, no private endpoint, no private DNS zone, zero container replicas, and telemetry that is capped rather than open-ended.
+Everything else idles at zero: no registry, no private endpoint, no private DNS zone, zero container replicas, and telemetry that is capped rather than open-ended. Catalog's move to internal-only ingress and the in-environment smoke job did not change this baseline: both reuse the existing Container Apps Environment, and the smoke job is manual-trigger, so it runs only when the pipeline starts it.
 
 The result would become **`FREE`** for practical purposes once the Azure SQL free offer is adopted, which is the single remaining step and is deliberately left to an operator because it destroys data.
 

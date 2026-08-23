@@ -22,10 +22,12 @@ These are not .NET projects, but they are part of the design and are enforced li
 | --- | --- | --- | --- |
 | `.github/workflows/ci-cd.yml` | The single CI/CD definition: PR validation and `main` deployment | Reference GitHub secrets by name, call the deployment scripts | Containing secret values; deploying from a pull request; a competing Azure Pipelines definition |
 | `scripts/bootstrap-pulumi.ps1` | Discover and select the existing backend and `dev` stack | Reconcile existing config, read the passphrase from the environment | Creating or migrating the backend; changing the secrets provider |
-| `scripts/invoke-pulumi-preview.ps1` | Run `pulumi preview`, store the digest, block destructive plans | Fail a stage | Running `pulumi up` or `pulumi destroy` |
+| `scripts/invoke-pulumi-preview.ps1` | Run `pulumi preview`, store the digest, block destructive plans and public Catalog ingress | Fail a stage | Running `pulumi up` or `pulumi destroy` |
 | `scripts/run-migrations-dev.ps1` | Start the Container Apps migrator job and await its result | Emit redacted diagnostics | Letting smoke tests run after a failed migration |
-| `scripts/smoke-test-dev.ps1` | Read-only verification of the deployed API | `GET` only | `POST`, writing permanent data, Playwright |
-| `scripts/tests/preview-guard-check.ps1` | Offline self-check of the destruction guard | Run in `validate` with no Azure access | Requiring a backend, a login, or the network |
+| `scripts/azure-containerapp-job.ps1` | Run a one-off command inside the Container Apps Environment as a manual job | Create, start, poll and delete a temporary job | Leaving the job behind; emitting unredacted logs |
+| `scripts/internal-smoke-dev.ps1` | Read-only verification of the deployed API from inside the environment | `GET` only, through a Container Apps Job | `POST`, writing permanent data, Playwright, reaching the API from a public runner |
+| `scripts/tests/preview-guard-check.ps1` | Offline self-check of the destruction and private-ingress guards | Run in `validate` with no Azure access | Requiring a backend, a login, or the network |
+| `scripts/tests/internal-smoke-check.ps1` | Offline self-check of the internal smoke transport | Run in `validate` against a scripted Azure CLI fake | Requiring a subscription, a login, or the network |
 
 The deployment scripts are the shared implementation for both local operation and the workflow, so CI/CD adds orchestration and evidence rather than a second, divergent deployment path. That is also what made replacing the orchestrator cheap: moving from Azure Pipelines to GitHub Actions changed the workflow file and left every script untouched.
 

@@ -99,6 +99,71 @@ function Get-ProtectedResourceViolation {
     return $violations
 }
 
+function Get-Property {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    # Set-StrictMode turns a missing property into a terminating error, and a preview digest
+    # legitimately omits properties (a delete step has no new state at all). Probing keeps
+    # the guard reading real absence as absence rather than crashing on it.
+    if ($null -eq $Value) { return $null }
+    if ($Value -isnot [psobject]) { return $null }
+    if ($Value.PSObject.Properties.Name -notcontains $Name) { return $null }
+    return $Value.$Name
+}
+
+<#
+Catalog's API has no application-layer authentication and exposes mutating endpoints, so its
+only access boundary is the network. This guard is what stops that boundary from being
+removed by an edit nobody reviewed closely.
+
+It reads the ingress Pulumi actually plans to apply, not the source text, so a refactor that
+moves the value into a variable, a config setting or a helper is still caught.
+
+Scoped to `azure-native:app:ContainerApp`. Container Apps Jobs have no ingress and are a
+different type, so they are untouched, and an app that deliberately has no ingress block is
+not reachable and is not flagged.
+#>
+function Get-IngressViolation {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Steps)
+
+    $violations = @()
+    foreach ($step in $Steps) {
+        if ((Get-PulumiResourceType -Urn ([string]$step.urn)) -ne 'azure-native:app:ContainerApp') {
+            continue
+        }
+
+        # A delete step describes what is going away; there is no future ingress to judge.
+        if ([string]$step.op -eq 'delete') {
+            continue
+        }
+
+        $inputs = Get-Property -Value (Get-Property -Value $step -Name 'newState') -Name 'inputs'
+        $ingress = Get-Property -Value (Get-Property -Value $inputs -Name 'configuration') -Name 'ingress'
+        if ($null -eq $ingress) {
+            continue
+        }
+
+        $urn = [string]$step.urn
+        if ([bool](Get-Property -Value $ingress -Name 'external')) {
+            $violations += "external ingress is enabled -> $urn"
+        }
+
+        if ([bool](Get-Property -Value $ingress -Name 'allowInsecure')) {
+            $violations += "allowInsecure is enabled -> $urn"
+        }
+
+        $targetPort = Get-Property -Value $ingress -Name 'targetPort'
+        if ($null -ne $targetPort -and [int]$targetPort -ne 8080) {
+            $violations += "targetPort is $targetPort, expected 8080 -> $urn"
+        }
+    }
+
+    return $violations
+}
+
 if ($PSCmdlet.ParameterSetName -eq 'Analyze') {
     $previewText = Get-Content -Raw -LiteralPath $PreviewJsonPath
     $EvidencePath = $PreviewJsonPath
@@ -148,6 +213,16 @@ if ($violations.Count -gt 0) {
     Write-Host '##vso[task.logissue type=error]Pulumi preview proposes destroying protected Catalog infrastructure.'
     $violations | ForEach-Object { Write-Host "##vso[task.logissue type=error]$_" }
     throw "Pulumi preview '$Label' proposes $($violations.Count) destructive change(s) to protected resources. Refusing to continue; review the preview evidence and resolve the drift manually."
+}
+
+$ingressViolations = @(Get-IngressViolation -Steps $steps)
+if ($ingressViolations.Count -gt 0) {
+    Write-Host '##vso[task.logissue type=error]Pulumi preview would expose the Catalog API outside its private network boundary.'
+    $ingressViolations | ForEach-Object { Write-Host "##vso[task.logissue type=error]$_" }
+    throw "Pulumi preview '$Label' would publish the Catalog API: $($ingressViolations -join '; '). " +
+        'Catalog has no application-layer authentication, so its ingress must stay internal. ' +
+        'If an Internet-facing Catalog is genuinely intended, that is a security decision that ' +
+        'needs authentication first, not a change to this guard.'
 }
 
 [pscustomobject]@{

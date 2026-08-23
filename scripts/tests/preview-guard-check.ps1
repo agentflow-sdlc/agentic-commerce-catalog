@@ -23,6 +23,33 @@ $guard = Join-Path $PSScriptRoot '..\invoke-pulumi-preview.ps1'
 $workingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "catalog-preview-guard-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Path $workingDirectory -Force | Out-Null
 
+function New-IngressStep {
+    param(
+        [Parameter(Mandatory)][string]$Urn,
+        [string]$Op = 'update',
+        [bool]$External = $false,
+        [bool]$AllowInsecure = $false,
+        [int]$TargetPort = 8080
+    )
+
+    return @{
+        op = $Op
+        urn = $Urn
+        newState = @{
+            urn = $Urn
+            inputs = @{
+                configuration = @{
+                    ingress = @{
+                        external = $External
+                        allowInsecure = $AllowInsecure
+                        targetPort = $TargetPort
+                    }
+                }
+            }
+        }
+    }
+}
+
 function New-PreviewFixture {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -141,6 +168,55 @@ try {
         -Path (New-PreviewFixture -Name 'subnet-replace' -Steps @(
             @{ op = 'replace'; urn = $subnetUrn })) `
         -Because 'replacing the container apps subnet is refused'
+
+    # ---------------------------------------------------------------------------------
+    # Private-ingress regression guard. Catalog has no application-layer authentication,
+    # so external ingress is an unauthenticated write surface on the Internet. These
+    # assertions are what stop it from coming back unnoticed.
+    # ---------------------------------------------------------------------------------
+    $jobUrn = 'urn:pulumi:dev::catalog::agentflow:catalog:CatalogWorkload$azure-native:app:Job::catalog-database-migrator-job'
+
+    Assert-GuardAccepts `
+        -Path (New-PreviewFixture -Name 'ingress-internal' -Steps @(
+            New-IngressStep -Urn $containerAppUrn)) `
+        -Because 'internal ingress on port 8080 is the intended configuration'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'ingress-external' -Steps @(
+            New-IngressStep -Urn $containerAppUrn -External $true)) `
+        -Because 'external ingress on the Catalog API is refused'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'ingress-external-on-create' -Steps @(
+            New-IngressStep -Urn $containerAppUrn -Op 'create' -External $true)) `
+        -Because 'external ingress is refused when the app is created, not only when updated'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'ingress-external-unchanged' -Steps @(
+            New-IngressStep -Urn $containerAppUrn -Op 'same' -External $true)) `
+        -Because 'an already public app is refused even when the preview reports no change'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'ingress-allow-insecure' -Steps @(
+            New-IngressStep -Urn $containerAppUrn -AllowInsecure $true)) `
+        -Because 'allowInsecure on the Catalog API is refused'
+
+    Assert-GuardRejects `
+        -Path (New-PreviewFixture -Name 'ingress-wrong-port' -Steps @(
+            New-IngressStep -Urn $containerAppUrn -TargetPort 80)) `
+        -Because 'an unexpected target port is refused'
+
+    # The rule must not leak onto resources with different networking semantics.
+    Assert-GuardAccepts `
+        -Path (New-PreviewFixture -Name 'job-has-no-ingress' -Steps @(
+            @{ op = 'update'; urn = $jobUrn; newState = @{ urn = $jobUrn; inputs = @{
+                configuration = @{ triggerType = 'Manual' } } } })) `
+        -Because 'a Container Apps Job has no ingress and is not judged by this rule'
+
+    Assert-GuardAccepts `
+        -Path (New-PreviewFixture -Name 'container-app-delete-has-no-future-ingress' -Steps @(
+            @{ op = 'delete'; urn = $roleAssignmentUrn })) `
+        -Because 'a delete step describes what is going away, not a future ingress'
 
     Write-Host 'Pulumi preview guard self-check passed.'
 }

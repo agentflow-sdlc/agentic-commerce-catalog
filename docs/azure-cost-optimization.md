@@ -41,6 +41,12 @@ Audited against the live subscription (`Azure subscription 1`) and Pulumi stack 
 
 NAT Gateway, Application Gateway, VPN Gateway, Bastion, Azure Firewall, standalone reserved public IPs, dedicated Load Balancers, and any Container Apps dedicated workload profile. The environment runs Consumption only.
 
+### Making Catalog internal costs nothing
+
+Catalog ingress moved from external to internal. That is a security change, not a cost change: Container Apps internal ingress uses the same platform-managed load balancer the environment already has, so no NAT Gateway, no Application Gateway, no Front Door, no API Management and no second environment were introduced.
+
+Post-deployment smoke moved inside the environment for the same reason. It runs as a **manual** Container Apps Job that is created immediately before use and deleted afterwards, so it holds no replica and adds no fixed cost — the same lifecycle as the existing migration job. The execution image is pulled anonymously from Microsoft Container Registry, so it also adds no registry cost and no stored credential.
+
 ### The unaccounted AI Services account
 
 `emanuelabr22-0813-resource` is an `AIServices` account on SKU `S0` in `westus3`, inside `NetworkWatcherRG`. It is **not** part of the Pulumi stack, does not appear in any stack output, and nothing in this repository references it. Its naming matches the default an Azure AI Foundry portal quick-create produces.

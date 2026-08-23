@@ -120,9 +120,16 @@ jobs:
       - name: dotnet format --verify-no-changes
         run: dotnet format Catalog.sln --verify-no-changes --no-restore
 
-      - name: Verify Pulumi destruction guard
+      # Covers the destruction guard and the private-ingress guard. The latter fails the
+      # build if a preview would publish the Catalog API, which is the regression that this
+      # security hotfix exists to prevent.
+      - name: Verify Pulumi destruction and private-ingress guards
         shell: pwsh
         run: ./scripts/tests/preview-guard-check.ps1
+
+      - name: Verify the internal smoke transport
+        shell: pwsh
+        run: ./scripts/tests/internal-smoke-check.ps1
 
       - name: Restore Pulumi C# packages
         run: dotnet restore infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
@@ -475,6 +482,10 @@ jobs:
   # -------------------------------------------------------------------------------
   # 6. smoke-tests — main only, read-only GETs. Skipped automatically when migrations
   #    fail because this job needs run-migrations to succeed.
+  #
+  #    Catalog ingress is internal, so this runner cannot reach the API and must not be
+  #    able to. It uses the Azure management plane (OIDC, no stored credential) to run a
+  #    manual Container Apps Job, and the HTTP requests happen inside the environment.
   # -------------------------------------------------------------------------------
   smoke-tests:
     name: Smoke Tests
@@ -500,18 +511,23 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run read-only smoke tests
+      # `az containerapp` is an extension and is not preinstalled on the runner, exactly as
+      # the migration job requires it.
+      - name: Install the containerapp Azure CLI extension
+        run: az extension add --name containerapp --upgrade --only-show-errors
+
+      - name: Run read-only smoke tests inside the Container Apps Environment
         shell: pwsh
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CATALOG_SQL_ADMIN_PASSWORD: ${{ secrets.CATALOG_SQL_ADMIN_PASSWORD }}
         run: |
-          # The URL is discovered from the Pulumi stack output, never hardcoded.
+          # The internal endpoint is discovered from the Pulumi stack output, never hardcoded,
+          # and the script refuses to run against a non-internal FQDN.
           # GET only: no POST, no permanent data, no Playwright.
-          $result = ./scripts/smoke-test-dev.ps1
-          New-Item -ItemType Directory -Path (Join-Path $PWD 'evidence') -Force | Out-Null
-          $result | ConvertTo-Json -Depth 6 |
-            Set-Content -LiteralPath (Join-Path $PWD 'evidence/smoke-tests.json') -Encoding utf8NoBOM
+          $result = ./scripts/internal-smoke-dev.ps1 `
+            -EvidencePath (Join-Path $PWD 'evidence/smoke-tests.json')
+          $result | Format-List
 
       - name: Publish smoke evidence
         if: always()
@@ -545,7 +561,7 @@ jobs:
           MIGRATOR_IMAGE: ${{ needs.build-images.outputs.migratorImage }}
           MIGRATION_STATUS: ${{ needs.run-migrations.outputs.status }}
           MIGRATION_RUN: ${{ needs.run-migrations.outputs.executionName }}
-          DEPLOYED_URL: ${{ needs.deploy.outputs.catalogUrl }}
+          CATALOG_INTERNAL_URL: ${{ needs.deploy.outputs.catalogUrl }}
         run: |
           New-Item -ItemType Directory -Path catalog-evidence -Force | Out-Null
           # Run manifest. Deliberately contains no secrets, connection strings or
@@ -570,7 +586,9 @@ jobs:
             migratorImage   = $env:MIGRATOR_IMAGE
             migrationRun    = $env:MIGRATION_RUN
             migrationStatus = $env:MIGRATION_STATUS
-            deployedUrl     = $env:DEPLOYED_URL
+            catalogInternalUrl = $env:CATALOG_INTERNAL_URL
+            catalogPublicIngress = $false
+            smokeTransport  = 'container-app-job'
           }
           $manifest | ConvertTo-Json -Depth 5 |
             Set-Content -LiteralPath catalog-evidence/run-manifest.json -Encoding utf8NoBOM
