@@ -138,7 +138,7 @@ From an authenticated Azure CLI session, with the Pulumi passphrase and SQL admi
 pwsh ./scripts/deploy-dev.ps1
 ```
 
-The script validates the repository, provisions the foundation, builds immutable commit-based API and migrator images through ACR Tasks, deploys the workloads, runs the migration job, and verifies `/health`, `/products`, and `/categories`. Smoke evidence is written to `artifacts/deployment/dev/<commit-sha>/` and ignored by Git.
+The script validates the repository, provisions the foundation, builds immutable commit-based API and migrator images through ACR Tasks, deploys the workloads, runs the migration job, and verifies `/health`, `/products`, and `/categories` from inside the Container Apps Environment. Smoke evidence is written to `artifacts/deployment/dev/<commit-sha>/` and ignored by Git.
 
 Its ACR Tasks step currently fails on this subscription (`TasksOperationsNotAllowed`); see [Container image builds](#container-image-builds). CI is unaffected.
 
@@ -148,7 +148,20 @@ GitHub -> Pulumi C# -> ACR -> Azure Container Apps -> Catalog API -> Azure SQL
                                 +-> migration job       +-> Application Insights
 ```
 
-Azure SQL has public access disabled. Container Apps reaches it through a delegated VNet subnet, SQL Private Endpoint, and private DNS. A user-assigned managed identity provides ACR pulls, Key Vault secret references, and Azure Monitor ingestion.
+### Network boundary
+
+**The Catalog API is internal-only in the Azure dev/POC environment and is not reachable from the Internet.** Its Container Apps ingress is `external: false`, so it resolves and answers only inside the Container Apps Environment.
+
+This matters because the API implements **no application-layer authentication** and exposes mutating operations (`POST /products`, `PATCH /products/{id}/status`, `POST /categories`). HTTPS protects the transport; it does not make an unauthenticated API private. The private network boundary is currently the only access control, and it is described here as exactly that rather than as production-grade zero-trust security.
+
+Consequences worth knowing:
+
+- CI cannot reach the API from a GitHub-hosted runner, and must not be changed so it can. Post-deployment smoke runs *inside* the environment through a manual Container Apps Job started over the Azure management plane — see [`scripts/internal-smoke-dev.ps1`](scripts/internal-smoke-dev.ps1).
+- The `catalogUrl` stack output is an environment-internal FQDN. It is not a public address and cannot be opened from a laptop.
+- Developer access from a local machine will be provided separately through authorized private connectivity. That work is not part of this repository yet, so there is currently no supported way to call the deployed API by hand.
+- `scripts/tests/preview-guard-check.ps1` fails the build if a Pulumi preview would set external ingress, so this boundary cannot be removed unnoticed.
+
+Azure SQL is a separate resource with its own boundary: public access is disabled and Container Apps reaches it through a delegated VNet subnet, SQL Private Endpoint, and private DNS. A user-assigned managed identity provides ACR pulls, Key Vault secret references, and Azure Monitor ingestion.
 
 SQL authentication is a temporary MVP exception. The password exists only in encrypted Pulumi configuration and in the Key Vault connection-string secret. It never enters images, source files, logs, PR text, outputs, or smoke evidence.
 
@@ -188,7 +201,7 @@ GitHub main -> GitHub Actions
                           immutable tag <run-id>-<short-sha>, never `latest`
   deploy                  pulumi preview (destruction gate) -> pulumi up --yes
   run-migrations          start the Container Apps migrator job and await its result
-  smoke-tests             GET /health, /products, /categories
+  smoke-tests             GET /health, /products, /categories (inside the environment)
   publish-evidence        consolidated artifacts + run manifest
 ```
 

@@ -4,13 +4,23 @@ info:
   version: 0.1.0
   description: >-
     Technology-neutral HTTP contract for the .NET Catalog service. Product and
-    Category operations preserve the behavior of the historical public API.
+    Category operations preserve the behavior of the historical Catalog HTTP API
+    contract. That compatibility is about routes, payloads and error shapes only;
+    it says nothing about network reachability. In the Azure dev/POC environment
+    the service has internal-only Container Apps ingress and is not reachable from
+    the Internet.
   license:
     name: UNLICENSED
+# No application-layer authentication is implemented. This is an accurate statement of
+# the current POC, not a claim that the API is safe to expose: access is restricted by
+# the private network boundary described above, and that boundary is the only control.
 security: []
 servers:
   - url: /
-    description: Current Catalog API host.
+    description: >-
+      Relative to whatever host serves the API. In the Azure dev/POC environment that
+      is the environment-internal Container Apps FQDN, reachable only from inside the
+      Container Apps Environment.
 tags:
   - name: Health
     description: Runtime health information.

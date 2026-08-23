@@ -96,7 +96,9 @@ try {
         throw 'The database migrator job did not succeed.'
     }
 
-    $smokeTests = & (Join-Path $PSScriptRoot 'smoke-test-dev.ps1')
+    # Catalog ingress is internal, so verification runs inside the Container Apps Environment
+    # rather than reaching the service from here.
+    $smokeTests = & (Join-Path $PSScriptRoot 'internal-smoke-dev.ps1')
 
     [pscustomobject]@{
         SubscriptionName = $context.SubscriptionName
@@ -107,8 +109,11 @@ try {
         MigratorImage = $migratorImage
         MigrationExecution = $migration.ExecutionName
         MigrationStatus = $migration.Status
-        CatalogUrl = $smokeTests.baseUrl
-        SmokeTests = $smokeTests.results
+        CatalogInternalUrl = $smokeTests.target
+        SmokeTransport = $smokeTests.transport
+        SmokeExecution = $smokeTests.execution
+        SmokeStatus = $smokeTests.status
+        SmokeChecks = $smokeTests.validatedChecks
     }
 }
 finally {

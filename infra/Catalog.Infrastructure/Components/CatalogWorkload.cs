@@ -116,7 +116,15 @@ internal sealed class CatalogWorkload : ComponentResource
                     Secrets = [databaseSecret],
                     Ingress = new AppInputs.IngressArgs
                     {
-                        External = true,
+                        // Internal only. The API has no application-layer authentication and
+                        // exposes mutating endpoints (POST /products, PATCH /products/{id}/status,
+                        // POST /categories), so a public FQDN would be an unauthenticated write
+                        // surface on the Internet. HTTPS protects the transport; it does not make
+                        // an unauthenticated API private. Reachability is limited to the Container
+                        // Apps Environment, and deployment smoke runs inside it rather than from a
+                        // public runner. Do not flip this to true to make CI reach the service --
+                        // scripts/internal-smoke-dev.ps1 exists precisely so that is never needed.
+                        External = false,
                         AllowInsecure = false,
                         TargetPort = 8080,
                         TargetPortHttpScheme = "http",
@@ -218,6 +226,10 @@ internal sealed class CatalogWorkload : ComponentResource
                     .ToArray(),
             });
 
+        // With internal ingress this resolves to the environment-internal Container Apps
+        // FQDN, not an Internet-reachable address. It is the supported way for workloads in
+        // the same environment -- and for the smoke job -- to address Catalog, so no private
+        // IP is ever hardcoded. Anything outside the environment cannot resolve or reach it.
         CatalogUrl = CatalogApi.Configuration.Apply(configuration =>
             $"https://{configuration?.Ingress?.Fqdn
                 ?? throw new InvalidOperationException(
