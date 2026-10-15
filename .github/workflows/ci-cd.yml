@@ -78,7 +78,7 @@ jobs:
           --logger "trx;LogFileName=Catalog.ApiTests.trx"
           --results-directory evidence/test-results
 
-      - name: Architecture tests (IDesign dependency rules)
+      - name: Architecture tests (Clean Architecture dependency rule)
         run: >-
           dotnet test tests/Catalog.Architecture.Tests/Catalog.Architecture.Tests.csproj
           --configuration "$BUILD_CONFIGURATION" --no-build
@@ -105,15 +105,15 @@ jobs:
       - name: Validate EF Core migration model
         run: >-
           dotnet ef migrations has-pending-model-changes
-          --project src/Catalog.Accessors/Catalog.Accessors.csproj
-          --startup-project src/Catalog.Api/Catalog.Api.csproj
+          --project src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj
+          --startup-project src/Clients/Api/Catalog.Clients.Api.csproj
           --configuration "$BUILD_CONFIGURATION" --no-build
 
       - name: Generate idempotent migration evidence
         run: >-
           dotnet ef migrations script --idempotent
-          --project src/Catalog.Accessors/Catalog.Accessors.csproj
-          --startup-project src/Catalog.Api/Catalog.Api.csproj
+          --project src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj
+          --startup-project src/Clients/Api/Catalog.Clients.Api.csproj
           --configuration "$BUILD_CONFIGURATION" --no-build
           --output evidence/Catalog.Migrations.sql
 
@@ -253,7 +253,7 @@ jobs:
 
           $images = @(
             @{ Repository = 'catalog-api';               Dockerfile = 'Dockerfile' }
-            @{ Repository = 'catalog-database-migrator'; Dockerfile = 'src/Catalog.DatabaseMigrator/Dockerfile' }
+            @{ Repository = 'catalog-database-migrator'; Dockerfile = 'src/Clients/DatabaseMigrator/Dockerfile' }
           )
 
           foreach ($image in $images) {

@@ -19,10 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Catalog.Api\Catalog.Api.csproj" />
-    <ProjectReference Include="..\..\src\Catalog.Contracts\Catalog.Contracts.csproj" />
-    <ProjectReference Include="..\..\src\Catalog.Engines\Catalog.Engines.csproj" />
-    <ProjectReference Include="..\..\src\Catalog.Managers\Catalog.Managers.csproj" />
+    <ProjectReference Include="..\..\src\Clients\Api\Catalog.Clients.Api.csproj" />
+    <ProjectReference Include="..\..\src\Domain\Catalog.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Application\Catalog.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>

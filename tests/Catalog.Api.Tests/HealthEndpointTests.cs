@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using Catalog.Contracts;
+using Catalog.Clients.Api.Contracts;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Catalog.Api.Tests;

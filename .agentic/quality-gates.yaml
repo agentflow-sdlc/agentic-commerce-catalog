@@ -22,9 +22,9 @@ gates:
   openapi-validation:
     command: dotnet test tests/Catalog.Api.Tests/Catalog.Api.Tests.csproj --configuration Release --no-build --filter Category=OpenApi
   migration-validation:
-    command: dotnet ef migrations has-pending-model-changes --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
+    command: dotnet ef migrations has-pending-model-changes --project src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj --startup-project src/Clients/Api/Catalog.Clients.Api.csproj --configuration Release --no-build
   migration-script:
-    command: dotnet ef migrations script --idempotent --project src/Catalog.Accessors/Catalog.Accessors.csproj --startup-project src/Catalog.Api/Catalog.Api.csproj --configuration Release --no-build
+    command: dotnet ef migrations script --idempotent --project src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj --startup-project src/Clients/Api/Catalog.Clients.Api.csproj --configuration Release --no-build
   pulumi-build:
     command: dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration Release
   preview-guard-self-check:

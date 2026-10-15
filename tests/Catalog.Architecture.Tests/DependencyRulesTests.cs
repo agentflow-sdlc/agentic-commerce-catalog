@@ -5,67 +5,64 @@ namespace Catalog.Architecture.Tests;
 
 public sealed class DependencyRulesTests
 {
-    private static readonly Assembly ContractsAssembly = typeof(Catalog.Contracts.HealthResponse).Assembly;
+    private static readonly Assembly DomainAssembly = typeof(Catalog.Domain.AssemblyMarker).Assembly;
+    private static readonly Assembly ApplicationAssembly = typeof(Catalog.Application.AssemblyMarker).Assembly;
+    private static readonly Assembly SqlAssembly = typeof(Catalog.Infrastructure.Sql.AssemblyMarker).Assembly;
     private static readonly Assembly ApiAssembly = typeof(Program).Assembly;
-    private static readonly Assembly ManagersAssembly = typeof(Catalog.Managers.AssemblyMarker).Assembly;
-    private static readonly Assembly EnginesAssembly = typeof(Catalog.Engines.AssemblyMarker).Assembly;
-    private static readonly Assembly AccessorsAssembly = typeof(Catalog.Accessors.AssemblyMarker).Assembly;
-    private static readonly Assembly MigratorAssembly = typeof(Catalog.DatabaseMigrator.AssemblyMarker).Assembly;
+    private static readonly Assembly MigratorAssembly = typeof(Catalog.Clients.DatabaseMigrator.AssemblyMarker).Assembly;
 
     private static readonly Assembly[] ProductionAssemblies =
     [
-        ContractsAssembly,
+        DomainAssembly,
+        ApplicationAssembly,
+        SqlAssembly,
         ApiAssembly,
-        ManagersAssembly,
-        EnginesAssembly,
-        AccessorsAssembly,
         MigratorAssembly,
     ];
 
-    [Fact]
-    public void ContractsDoNotDependOnOtherProductionProjects()
+    // Clean Architecture: references point inward only (Clients -> Infrastructure -> Application -> Domain).
+    [Theory]
+    [InlineData("Catalog.Domain", new string[0])]
+    [InlineData("Catalog.Application", new[] { "Catalog.Domain" })]
+    [InlineData("Catalog.Infrastructure.Sql", new[] { "Catalog.Application", "Catalog.Domain" })]
+    [InlineData("Catalog.Clients.Api", new[] { "Catalog.Application", "Catalog.Infrastructure.Sql" })]
+    [InlineData("Catalog.Clients.DatabaseMigrator", new[] { "Catalog.Infrastructure.Sql" })]
+    public void ReferencesPointInwardOnly(string assemblyName, string[] allowed)
     {
-        var references = GetReferenceNames(ContractsAssembly);
+        var assembly = ProductionAssemblies.Single(candidate => candidate.GetName().Name == assemblyName);
+        var catalogReferences = GetReferenceNames(assembly)
+            .Where(reference => reference.StartsWith("Catalog.", StringComparison.Ordinal))
+            .ToArray();
 
-        Assert.DoesNotContain(references, reference => reference.StartsWith("Catalog.", StringComparison.Ordinal));
+        Assert.Empty(catalogReferences.Except(allowed, StringComparer.Ordinal));
     }
 
     [Fact]
-    public void EnginesRemainIndependentFromTechnologyAndAccessors()
+    public void DomainAndApplicationStayIndependentFromFrameworks()
     {
-        var references = GetReferenceNames(EnginesAssembly);
         var forbiddenPrefixes = new[]
         {
-            "Catalog.Api",
-            "Catalog.Accessors",
             "Microsoft.AspNetCore",
             "Microsoft.EntityFrameworkCore",
+            "Microsoft.Data.SqlClient",
             "Azure",
             "Microsoft.Azure",
         };
 
-        foreach (var forbiddenPrefix in forbiddenPrefixes)
+        foreach (var assembly in new[] { DomainAssembly, ApplicationAssembly })
         {
             Assert.DoesNotContain(
-                references,
-                reference => reference.StartsWith(forbiddenPrefix, StringComparison.Ordinal));
+                GetReferenceNames(assembly),
+                reference => forbiddenPrefixes.Any(prefix => reference.StartsWith(prefix, StringComparison.Ordinal)));
         }
     }
 
     [Fact]
-    public void ManagersDependOnDomainPortsButNotTechnicalFrameworks()
-    {
-        var references = GetReferenceNames(ManagersAssembly);
-
-        Assert.Contains("Catalog.Engines", references);
-        Assert.DoesNotContain("Catalog.Accessors", references);
+    public void TheDomainDeclaresNoPorts() =>
+        // Ports are the application's: the domain holds the model and its rules only.
         Assert.DoesNotContain(
-            references,
-            reference => reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
-        Assert.DoesNotContain(
-            references,
-            reference => reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal));
-    }
+            DomainAssembly.GetTypes(),
+            type => type.IsInterface && type.Name.EndsWith("Repository", StringComparison.Ordinal));
 
     [Fact]
     public void ApiContainsNoProductOrCategoryBusinessNamespaces()
@@ -82,12 +79,12 @@ public sealed class DependencyRulesTests
     }
 
     [Fact]
-    public void ApiUsesAccessorsOnlyAsACompositionDependency()
+    public void ApiUsesTheSqlAdapterOnlyAsACompositionDependency()
     {
         var references = GetReferenceNames(ApiAssembly);
 
-        Assert.Contains("Catalog.Accessors", references);
-        Assert.DoesNotContain("Catalog.Engines", references);
+        Assert.Contains("Catalog.Infrastructure.Sql", references);
+        Assert.DoesNotContain("Catalog.Domain", references);
         Assert.DoesNotContain(
             references,
             reference => reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal));
@@ -97,33 +94,25 @@ public sealed class DependencyRulesTests
     }
 
     [Fact]
-    public void AccessorsImplementDomainPortsWithoutDependingOnApiOrManagers()
-    {
-        var references = GetReferenceNames(AccessorsAssembly);
-
-        Assert.Contains("Catalog.Engines", references);
-        Assert.DoesNotContain("Catalog.Api", references);
-        Assert.DoesNotContain("Catalog.Managers", references);
-        Assert.DoesNotContain("Catalog.Contracts", references);
+    public void TheSqlAdapterDoesNotDependOnHttp() =>
         Assert.DoesNotContain(
-            references,
+            GetReferenceNames(SqlAssembly),
             reference => reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
-    }
 
     [Fact]
-    public void CatalogEndpointsDelegateWithoutCallingEnginesAccessorsOrEfCore()
+    public void CatalogEndpointsDelegateWithoutCallingTheDomainSqlOrEfCore()
     {
         var endpointTypes = new[]
             {
-                ApiAssembly.GetType("Catalog.Api.ProductEndpoints", throwOnError: true)!,
-                ApiAssembly.GetType("Catalog.Api.CategoryEndpoints", throwOnError: true)!,
+                ApiAssembly.GetType("Catalog.Clients.Api.ProductEndpoints", throwOnError: true)!,
+                ApiAssembly.GetType("Catalog.Clients.Api.CategoryEndpoints", throwOnError: true)!,
             }
             .SelectMany(GetTypeAndNestedTypes)
             .ToArray();
         var forbiddenAssemblies = new[]
         {
-            "Catalog.Engines",
-            "Catalog.Accessors",
+            "Catalog.Domain",
+            "Catalog.Infrastructure.Sql",
             "Microsoft.EntityFrameworkCore",
             "Microsoft.Data.SqlClient",
         };
@@ -165,18 +154,6 @@ public sealed class DependencyRulesTests
     }
 
     [Fact]
-    public void NeutralLayersRemainIndependentFromAzureSdkAssemblies()
-    {
-        foreach (var assembly in new[] { ContractsAssembly, EnginesAssembly, ManagersAssembly })
-        {
-            Assert.DoesNotContain(
-                GetReferenceNames(assembly),
-                reference => reference.StartsWith("Azure", StringComparison.Ordinal)
-                    || reference.StartsWith("Microsoft.Azure", StringComparison.Ordinal));
-        }
-    }
-
-    [Fact]
     public void ApiCannotExecuteEntityFrameworkMigrations()
     {
         var references = GetReferenceNames(ApiAssembly);
@@ -184,7 +161,7 @@ public sealed class DependencyRulesTests
         Assert.DoesNotContain(
             references,
             reference => reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal));
-        Assert.DoesNotContain("Catalog.DatabaseMigrator", references);
+        Assert.DoesNotContain("Catalog.Clients.DatabaseMigrator", references);
     }
 
     [Fact]

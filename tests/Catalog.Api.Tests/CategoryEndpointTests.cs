@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Catalog.Contracts;
+using Catalog.Clients.Api.Contracts;
 
 namespace Catalog.Api.Tests;
 
