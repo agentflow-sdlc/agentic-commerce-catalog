@@ -58,7 +58,7 @@ try {
     & az acr build `
         --registry $registryName `
         --image "${migratorRepository}:$imageTag" `
-        --file src/Catalog.DatabaseMigrator/Dockerfile `
+        --file src/Clients/DatabaseMigrator/Dockerfile `
         --platform linux/amd64 `
         .
     if ($LASTEXITCODE -ne 0) { throw 'Catalog Database Migrator ACR build failed.' }

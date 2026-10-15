@@ -20,33 +20,32 @@ Successful Catalog responses use the historical `{ data, correlationId }` envelo
 
 ## Functional behavior
 
-Product creation normalizes SKU and text, accepts non-negative `decimal(18,2)` prices, creates an active `PRODUCT-<guid>`, and optionally stores one `categoryId`. The Manager rejects unknown categories; the database foreign key remains authoritative during write races. Products are listed by `createdAt DESC, id DESC` without pagination or per-row queries.
+Product creation normalizes SKU and text, accepts non-negative `decimal(18,2)` prices, creates an active `PRODUCT-<guid>`, and optionally stores one `categoryId`. `CreateProduct` rejects unknown categories; the database foreign key remains authoritative during write races. Products are listed by `createdAt DESC, id DESC` without pagination or per-row queries.
 
 Product status changes use only `{ "isActive": true|false }`. Every valid status request writes the requested state and a new `updatedAt`, including a repeated state.
 
 Category creation generates `CATEGORY-<guid>`, normalizes its display and comparison names, and preserves the optional description and timestamps. Categories are listed by normalized name and ID.
 
-## IDesign structure
+## Clean Architecture
 
 ```text
-HTTP -> Catalog.Api -> Catalog.Managers -> Catalog.Engines
-                                      -> domain-owned accessor ports
-                                      -> Catalog.Accessors -> EF Core -> SQL Server
+HTTP -> Catalog.Clients.Api -> use cases (Catalog.Application) -> rules (Catalog.Domain)
+                                        -> repository ports, implemented by
+                                           Catalog.Infrastructure.Sql -> EF Core -> SQL Server
 ```
 
 | Project | Responsibility |
 | --- | --- |
-| `Catalog.Contracts` | Provider-neutral Product, Category, health, collection, status, and error contracts. |
-| `Catalog.Api` | HTTP translation, correlation, safe logging, middleware, composition, OpenAPI, and optional telemetry. |
-| `Catalog.Managers` | Product and Category use-case coordination. |
-| `Catalog.Engines` | Deterministic rules, domain models, and accessor ports. |
-| `Catalog.Accessors` | Technical access to information containers; this implementation uses EF Core and SQL Server. |
-| `Catalog.DatabaseMigrator` | One-shot EF Core migration executable with no HTTP surface. |
-| `Catalog.Infrastructure` | Pulumi Azure Native components; no production project references it. |
+| `Catalog.Domain` | Product and Category models, deterministic rules, and stable ID validation. |
+| `Catalog.Application` | Use cases (`CreateProduct`, `GetProduct`, `ListProducts`, `SetProductStatus`, `CreateCategory`, `ListCategories`) and repository ports. |
+| `Catalog.Infrastructure.Sql` | EF Core SQL Server repositories and migrations. |
+| `Catalog.Clients.Api` | HTTP contracts, endpoints, middleware, correlation, safe logging, composition, OpenAPI, and optional telemetry. |
+| `Catalog.Clients.DatabaseMigrator` | One-shot EF Core migration executable with no HTTP surface. |
+| `Catalog.Infrastructure` (`infra/`) | Pulumi Azure Native components; no production project references it. |
 
-The API references Accessors only in the composition root. Managers use domain-owned ports and never reference EF Core, SQL, or Accessor implementations. Future file, API, object-store, or other information-container access also belongs in `Catalog.Accessors`.
+References point inward only. The API references the SQL adapter only to register it in the composition root; use cases depend on the ports, never on EF Core or SQL. Another store (files, an API, an object store) is a new adapter under `src/Infrastructure/`. `tests/Catalog.Architecture.Tests` enforces the rule.
 
-See [system design](docs/idesign/system-design.md), [project design](docs/idesign/project-design.md), [use cases](docs/idesign/use-cases.md), and [volatility analysis](docs/idesign/volatility-analysis.md).
+See [Clean Architecture](docs/architecture/clean-architecture.md) for the use cases, topology, delivery, and volatility analysis.
 
 ## Requirements
 
@@ -65,22 +64,22 @@ The connection string is named `CatalogDb`. No credential is committed.
 
 ```bash
 ConnectionStrings__CatalogDb="Server=localhost,1433;Database=AgenticCommerceCatalog;User Id=sa;Password=<local-password>;TrustServerCertificate=True" \
-  dotnet run --project src/Catalog.Api/Catalog.Api.csproj
+  dotnet run --project src/Clients/Api/Catalog.Clients.Api.csproj
 ```
 
 For local user secrets:
 
 ```bash
-dotnet user-secrets init --project src/Catalog.Api/Catalog.Api.csproj
+dotnet user-secrets init --project src/Clients/Api/Catalog.Clients.Api.csproj
 dotnet user-secrets set "ConnectionStrings:CatalogDb" "<connection-string>" \
-  --project src/Catalog.Api/Catalog.Api.csproj
+  --project src/Clients/Api/Catalog.Clients.Api.csproj
 ```
 
 ## Run locally
 
 ```bash
 dotnet restore Catalog.sln
-dotnet run --project src/Catalog.Api/Catalog.Api.csproj
+dotnet run --project src/Clients/Api/Catalog.Clients.Api.csproj
 ```
 
 Development OpenAPI is available at `/openapi/v1.json`. The provider-neutral source contract is [`openapi/catalog-api.yaml`](openapi/catalog-api.yaml).
@@ -93,16 +92,16 @@ Application Insights registration is optional. Local execution remains functiona
 
 ## EF Core migrations
 
-`src/Catalog.Accessors/Migrations` contains the incremental Product and Category schema history. Create a migration with:
+`src/Infrastructure/Sql/Migrations` contains the incremental Product and Category schema history. Create a migration with:
 
 ```bash
 dotnet ef migrations add <MigrationName> \
-  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
-  --startup-project src/Catalog.Api/Catalog.Api.csproj \
+  --project src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj \
+  --startup-project src/Clients/Api/Catalog.Clients.Api.csproj \
   --output-dir Migrations
 ```
 
-Production does not run migrations in the API process. Azure executes `Catalog.DatabaseMigrator` through a manually triggered Container Apps Job before smoke tests.
+Production does not run migrations in the API process. Azure executes `Catalog.Clients.DatabaseMigrator` through a manually triggered Container Apps Job before smoke tests.
 
 ## Validation
 
@@ -113,8 +112,8 @@ dotnet build Catalog.sln --configuration Release --no-restore
 dotnet test Catalog.sln --configuration Release --no-build
 dotnet format Catalog.sln --verify-no-changes --no-restore
 dotnet ef migrations has-pending-model-changes \
-  --project src/Catalog.Accessors/Catalog.Accessors.csproj \
-  --startup-project src/Catalog.Api/Catalog.Api.csproj \
+  --project src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj \
+  --startup-project src/Clients/Api/Catalog.Clients.Api.csproj \
   --configuration Release \
   --no-build
 dotnet build infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj --configuration Release
@@ -257,19 +256,18 @@ Product and Category parity plus the Azure dev deployment are implemented. Produ
 .agentic/                                   Machine-readable architecture and quality metadata
 .github/workflows/ci-cd.yml                 The only CI/CD definition (GitHub Actions)
 .config/dotnet-tools.json                   Pinned dotnet-ef tool
-src/Catalog.Contracts/                      Public HTTP contracts
-src/Catalog.Api/                            ASP.NET Core endpoints and middleware
-src/Catalog.Managers/                       Product and Category coordination
-src/Catalog.Engines/                        Product/Category rules, models, and ports
-src/Catalog.Accessors/Sql/                   EF Core SQL Server Accessors
-src/Catalog.Accessors/Migrations/            Incremental EF Core migrations
-src/Catalog.DatabaseMigrator/                Non-HTTP migration executable and image
+src/Domain/                                  Product/Category models and rules
+src/Application/                             Use cases and repository ports
+src/Infrastructure/Sql/                      EF Core SQL Server repositories
+src/Infrastructure/Sql/Migrations/           Incremental EF Core migrations
+src/Clients/Api/                             HTTP contracts, endpoints and middleware
+src/Clients/DatabaseMigrator/                Non-HTTP migration executable and image
 infra/Catalog.Infrastructure/                Pulumi Azure Native dev infrastructure
 scripts/                                     Idempotent deployment and verification scripts
 scripts/tests/                               Offline self-checks for the deployment scripts
 tests/                                       Unit, API, SQL integration, and architecture tests
 openapi/                                     Provider-neutral HTTP contract
-docs/idesign/                                Implemented IDesign evidence
+docs/architecture/                           Clean Architecture design
 docs/migration/                              Historical migration evidence
 ```
 

@@ -1,13 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Catalog.Accessors.Sql;
-using Catalog.Contracts;
-using Catalog.Engines.Categories;
-using Catalog.Engines.Products;
+using Catalog.Application.Categories;
+using Catalog.Application.Products;
+using Catalog.Clients.Api.Contracts;
+using Catalog.Domain.Categories;
+using Catalog.Domain.Products;
+using Catalog.Infrastructure.Sql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using DomainProduct = Catalog.Engines.Products.Product;
+using DomainProduct = Catalog.Domain.Products.Product;
 
 namespace Catalog.Product.IntegrationTests;
 
@@ -280,22 +282,22 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
 
         using (var firstScope = fixture.Services.CreateScope())
         {
-            await firstScope.ServiceProvider.GetRequiredService<IProductAccessor>()
+            await firstScope.ServiceProvider.GetRequiredService<IProductRepository>()
                 .AddAsync(firstProduct, CancellationToken.None);
-            await firstScope.ServiceProvider.GetRequiredService<ICategoryAccessor>()
+            await firstScope.ServiceProvider.GetRequiredService<ICategoryRepository>()
                 .AddAsync(firstCategory, CancellationToken.None);
         }
 
         using (var secondProductScope = fixture.Services.CreateScope())
         {
             await Assert.ThrowsAsync<ProductSkuAlreadyExistsException>(() =>
-                secondProductScope.ServiceProvider.GetRequiredService<IProductAccessor>()
+                secondProductScope.ServiceProvider.GetRequiredService<IProductRepository>()
                     .AddAsync(secondProduct, CancellationToken.None));
         }
 
         using var secondCategoryScope = fixture.Services.CreateScope();
         await Assert.ThrowsAsync<CategoryNameAlreadyExistsException>(() =>
-            secondCategoryScope.ServiceProvider.GetRequiredService<ICategoryAccessor>()
+            secondCategoryScope.ServiceProvider.GetRequiredService<ICategoryRepository>()
                 .AddAsync(secondCategory, CancellationToken.None));
     }
 
@@ -318,10 +320,10 @@ public sealed class ProductApiSqlServerTests(SqlServerApiFixture fixture)
             timestamp);
 
         using var scope = fixture.Services.CreateScope();
-        var accessor = scope.ServiceProvider.GetRequiredService<IProductAccessor>();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductRepository>();
 
         var exception = await Assert.ThrowsAsync<ProductCategoryNotFoundException>(() =>
-            accessor.AddAsync(product, CancellationToken.None));
+            repository.AddAsync(product, CancellationToken.None));
 
         Assert.Equal(categoryId, exception.CategoryId);
     }

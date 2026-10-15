@@ -1,18 +1,50 @@
 service: SERVICE-CATALOG-API
-entryPoint: src/Catalog.Api/Program.cs
+entryPoint: src/Clients/Api/Program.cs
 publicContract: openapi/catalog-api.yaml
 
+architecture: clean-architecture
+dependencyRule: references point inward only (clients -> infrastructure -> application -> domain)
+
 components:
-  contracts:
-    project: src/Catalog.Contracts/Catalog.Contracts.csproj
+  domain:
+    project: src/Domain/Catalog.Domain.csproj
     responsibilities:
-      - stable-http-contracts
+      - product-domain-model
+      - category-domain-model
+      - deterministic-product-rules
+      - deterministic-category-rules
+      - stable-product-id-validation
     allowedDependencies: []
+  application:
+    project: src/Application/Catalog.Application.csproj
+    responsibilities:
+      - product-use-cases
+      - category-use-cases
+      - repository-ports
+    useCases:
+      - CreateProduct
+      - ListProducts
+      - GetProduct
+      - SetProductStatus
+      - CreateCategory
+      - ListCategories
+    allowedDependencies:
+      - domain
+  infrastructure-sql:
+    project: src/Infrastructure/Sql/Catalog.Infrastructure.Sql.csproj
+    responsibilities:
+      - sql-repositories
+      - ef-core-migrations
+    allowedDependencies:
+      - application
+      - domain
+      - required-provider-libraries
   api:
-    project: src/Catalog.Api/Catalog.Api.csproj
+    project: src/Clients/Api/Catalog.Clients.Api.csproj
     responsibilities:
       - aspnet-core-entry-point
       - dependency-composition
+      - http-contracts
       - http-translation
       - middleware
       - health
@@ -20,45 +52,17 @@ components:
       - category-endpoints
       - development-openapi
     allowedDependencies:
-      - contracts
-      - managers
-      - accessors-composition-only
-  managers:
-    project: src/Catalog.Managers/Catalog.Managers.csproj
-    responsibilities:
-      - product-use-case-coordination
-      - category-use-case-coordination
-    allowedDependencies:
-      - engines-and-domain-ports
-  engines:
-    project: src/Catalog.Engines/Catalog.Engines.csproj
-    responsibilities:
-      - product-domain-model
-      - category-domain-model
-      - deterministic-product-rules
-      - deterministic-category-rules
-      - stable-product-id-validation
-      - neutral-accessor-ports
-    allowedDependencies: []
-  accessors:
-    project: src/Catalog.Accessors/Catalog.Accessors.csproj
-    responsibilities:
-      - sql-access
-      - future-file-access
-      - future-api-access
-      - future-information-container-access
-    allowedDependencies:
-      - engines-and-domain-ports
-      - required-provider-libraries
+      - application
+      - infrastructure-sql-composition-only
   database-migrator:
-    project: src/Catalog.DatabaseMigrator/Catalog.DatabaseMigrator.csproj
+    project: src/Clients/DatabaseMigrator/Catalog.Clients.DatabaseMigrator.csproj
     responsibilities:
       - one-shot-ef-core-migrations
       - non-http-process
     allowedDependencies:
-      - accessors
+      - infrastructure-sql
       - generic-host
-  infrastructure:
+  pulumi:
     project: infra/Catalog.Infrastructure/Catalog.Infrastructure.csproj
     responsibilities:
       - pulumi-azure-native
@@ -69,47 +73,41 @@ components:
       - azure-native
 
 forbiddenDependencies:
-  - from: contracts
+  - from: domain
     to:
+      - application
+      - infrastructure-sql
       - api
-      - managers
-      - engines
-      - accessors
-      - aspnet-core
-      - azure
-      - persistence
-  - from: engines
-    to:
-      - api
-      - accessors
       - aspnet-core
       - entity-framework-core
       - azure
       - sql
-  - from: managers
+  - from: application
     to:
-      - accessors
+      - infrastructure-sql
+      - api
       - aspnet-core
       - entity-framework-core
       - azure
       - sql
+  - from: infrastructure-sql
+    to:
+      - api
+      - aspnet-core
   - from: api
     to:
-      - direct-accessor-invocation
+      - direct-repository-invocation
       - entity-framework-core
       - sql-client
       - pulumi
-      - infrastructure
       - database-migrator
   - from: database-migrator
     to:
       - aspnet-core
       - http-endpoints
-      - infrastructure
       - pulumi
   - from: production-projects
     to:
-      - infrastructure
       - pulumi
 
 endpoints:
@@ -132,13 +130,13 @@ endpoints:
 
 persistence:
   status: product-category-parity
-  boundary: Catalog.Accessors
+  boundary: Catalog.Infrastructure.Sql
   provider: ef-core-sql-server
   azureSqlCompatible: true
   connectionString: CatalogDb
   migrations:
-    - src/Catalog.Accessors/Migrations/20260805214332_InitialProduct.cs
-    - src/Catalog.Accessors/Migrations/20260806153200_AddCategoriesAndProductCategory.cs
+    - src/Infrastructure/Sql/Migrations/20260805214332_InitialProduct.cs
+    - src/Infrastructure/Sql/Migrations/20260806153200_AddCategoriesAndProductCategory.cs
   constraints:
     - unique-product-sku
     - unique-category-normalized-name
@@ -205,8 +203,8 @@ cicd:
 
 runtimeAbstractions:
   time: System.TimeProvider
-  productIds: Catalog.Managers.Products.IProductIdGenerator
-  categoryIds: Catalog.Managers.Categories.ICategoryIdGenerator
+  productIds: Catalog.Application.Products.IProductIdGenerator
+  categoryIds: Catalog.Application.Categories.ICategoryIdGenerator
 
 errors:
   functionalValidation: PRODUCT_VALIDATION_FAILED

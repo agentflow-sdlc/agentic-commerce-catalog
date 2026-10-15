@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Catalog.Clients.DatabaseMigrator</AssemblyName>
+    <RootNamespace>Catalog.Clients.DatabaseMigrator</RootNamespace>
+    <Description>One-shot EF Core migration process for the Catalog database.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Infrastructure\Sql\Catalog.Infrastructure.Sql.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>

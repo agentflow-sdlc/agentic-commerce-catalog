@@ -2,11 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using Catalog.Contracts;
-using Catalog.Engines.Categories;
-using Catalog.Engines.Products;
-using Catalog.Managers.Categories;
-using Catalog.Managers.Products;
+using Catalog.Application.Categories;
+using Catalog.Application.Products;
+using Catalog.Clients.Api.Contracts;
+using Catalog.Domain.Categories;
+using Catalog.Domain.Products;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -272,20 +272,20 @@ public sealed class ProductApiFactory : WebApplicationFactory<Program>
     {
         builder.ConfigureTestServices(services =>
         {
-            services.RemoveAll<IProductAccessor>();
-            services.RemoveAll<ICategoryAccessor>();
+            services.RemoveAll<IProductRepository>();
+            services.RemoveAll<ICategoryRepository>();
             services.RemoveAll<IProductIdGenerator>();
             services.RemoveAll<ICategoryIdGenerator>();
             services.RemoveAll<TimeProvider>();
-            services.AddSingleton<IProductAccessor, TestProductAccessor>();
-            services.AddSingleton<ICategoryAccessor, TestCategoryAccessor>();
+            services.AddSingleton<IProductRepository, TestProductRepository>();
+            services.AddSingleton<ICategoryRepository, TestCategoryRepository>();
             services.AddSingleton<IProductIdGenerator, TestProductIdGenerator>();
             services.AddSingleton<ICategoryIdGenerator, TestCategoryIdGenerator>();
             services.AddSingleton<TimeProvider>(new TestTimeProvider());
         });
     }
 
-    private sealed class TestProductAccessor : IProductAccessor
+    private sealed class TestProductRepository : IProductRepository
     {
         private readonly Dictionary<string, Product> _products = new(StringComparer.Ordinal);
         private readonly object _sync = new();
@@ -350,7 +350,7 @@ public sealed class ProductApiFactory : WebApplicationFactory<Program>
         }
     }
 
-    private sealed class TestCategoryAccessor : ICategoryAccessor
+    private sealed class TestCategoryRepository : ICategoryRepository
     {
         private readonly Dictionary<string, Category> _categories = new(StringComparer.Ordinal);
         private readonly object _sync = new();

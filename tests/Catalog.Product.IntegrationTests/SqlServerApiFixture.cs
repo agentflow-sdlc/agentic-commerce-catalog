@@ -1,4 +1,4 @@
-using Catalog.Accessors.Sql;
+using Catalog.Infrastructure.Sql;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;

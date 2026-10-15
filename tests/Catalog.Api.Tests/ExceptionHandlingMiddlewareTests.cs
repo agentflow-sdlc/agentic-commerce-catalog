@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Catalog.Api.Middleware;
+using Catalog.Clients.Api.Middleware;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 
