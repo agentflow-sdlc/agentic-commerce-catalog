@@ -1,4 +1,5 @@
-# Catalog CI/CD — GitHub Actions is the only CI/CD definition.
+# Catalog CI/CD — GitHub Actions is the only CI/CD definition. It runs only when started by hand (see `on:`);
+# the pull request and push flows below describe what each event did when runs were automatic.
 #
 #   Pull request -> main
 #     validate -> infrastructure-preview -> publish-evidence          (never deploys)
@@ -15,10 +16,8 @@
 name: ci-cd
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  # Manual only: automatic runs on pull requests and pushes spent paid GitHub Actions minutes. Changes are
+  # verified locally before merge; run this from the Actions tab (or `gh workflow run`) when a hosted run is needed.
   workflow_dispatch:
 
 # OIDC needs id-token: write. Everything else stays read-only.
